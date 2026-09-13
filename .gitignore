@@ -1,0 +1,15 @@
+/target
+
+# CWN generated containers
+*.CWN
+*.cwn
+
+# Test/generated artifacts
+test-data/
+extracted-test/
+renamed.bin
+fake.CWN
+Corrupted.CWN
+
+# Rust build output
+target/
