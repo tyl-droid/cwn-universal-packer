@@ -75,3 +75,16 @@ fn control_characters_are_rejected() {
             .contains("package name cannot contain control characters")
     );
 }
+
+#[test]
+fn publisher_control_characters_are_rejected() {
+    let error = PackageMetadata::new("CWN Package", "1.0.0", "Community\nWatch Network")
+        .validate()
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("publisher cannot contain control characters")
+    );
+}

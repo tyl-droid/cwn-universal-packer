@@ -172,17 +172,24 @@ fn extract_file_entry(archive: &mut File, entry: &CwnEntry, destination: &Path) 
 
     archive.seek(SeekFrom::Start(entry.data_offset))?;
 
-    let mut output_file = File::create(destination)?;
+    let mut output_file = File::create(destination)
+        .with_context(|| format!("failed to create {}", destination.display()))?;
 
-    let result = extract_file_contents(archive, entry, &mut output_file);
+    let result = (|| -> Result<()> {
+        extract_file_contents(archive, entry, &mut output_file)?;
+
+        output_file
+            .flush()
+            .with_context(|| format!("failed to flush {}", destination.display()))?;
+
+        Ok(())
+    })();
 
     if let Err(error) = result {
         drop(output_file);
         let _ = fs::remove_file(destination);
         return Err(error);
     }
-
-    output_file.flush()?;
 
     Ok(())
 }
