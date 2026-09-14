@@ -13,6 +13,9 @@ pub struct CwnEntry {
     pub path: String,
     pub kind: EntryKind,
 
+    #[serde(default = "default_file_type")]
+    pub file_type: String,
+
     pub original_size: u64,
     pub packed_size: u64,
 
@@ -30,12 +33,16 @@ pub enum EntryKind {
     Directory,
 }
 
+fn default_file_type() -> String {
+    "Binary / Other".to_string()
+}
+
 impl CwnManifest {
     pub fn new(entries: Vec<CwnEntry>) -> Self {
         Self {
             format: "CWN".to_string(),
             version: 1,
-            producer: "CWN Universal Packer".to_string(),
+            producer: "Community Watch Network".to_string(),
             entries,
         }
     }

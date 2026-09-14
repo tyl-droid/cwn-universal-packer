@@ -10,7 +10,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(
     name = "cwnpack",
-    version = "0.1.0",
+    version,
     author = "Community Watch Network",
     about = "CWN Universal Packer",
     long_about = "Pack, inspect, verify and extract arbitrary files and directories using the CWN container format."

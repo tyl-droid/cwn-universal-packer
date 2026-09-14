@@ -1,5 +1,6 @@
 use crate::container::header::CwnHeader;
 use crate::container::manifest::{CwnEntry, CwnManifest, EntryKind};
+use crate::filesystem::filetype::detect_file_type;
 use crate::security::hash::sha256_reader;
 
 use anyhow::{Context, Result, bail};
@@ -140,6 +141,7 @@ fn pack_directory(
             entries.push(CwnEntry {
                 path: archive_path,
                 kind: EntryKind::Directory,
+                file_type: "Directory".to_string(),
                 original_size: 0,
                 packed_size: 0,
                 data_offset: 0,
@@ -215,6 +217,7 @@ fn pack_file(
     entries.push(CwnEntry {
         path: archive_path,
         kind: EntryKind::File,
+        file_type: detect_file_type(source).to_string(),
         original_size,
         packed_size,
         data_offset,
