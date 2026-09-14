@@ -339,6 +339,7 @@ mod desktop {
 
             let Some(archive) = self.archive.clone() else {
                 self.status = "Open a .CWN container first.".to_string();
+                self.status_kind = StatusKind::Warning;
                 return;
             };
 
@@ -381,6 +382,7 @@ mod desktop {
 
             let Some(archive) = self.archive.clone() else {
                 self.status = "Open a .CWN container first.".to_string();
+                self.status_kind = StatusKind::Warning;
                 return;
             };
 
@@ -417,11 +419,13 @@ mod desktop {
 
             let Some(archive) = self.archive.clone() else {
                 self.status = "Open a .CWN container first.".to_string();
+                self.status_kind = StatusKind::Warning;
                 return;
             };
 
             let Some(output) = self.extract_to.clone() else {
                 self.status = "Choose an extraction destination first.".to_string();
+                self.status_kind = StatusKind::Warning;
                 return;
             };
 
@@ -456,6 +460,90 @@ mod desktop {
                     Err(error) => {
                         let _ =
                             sender.send(GuiMessage::Error(format!("Extraction failed: {error}")));
+                    }
+                }
+            });
+        }
+
+        fn start_extract_selected(&mut self) {
+            if self.busy {
+                return;
+            }
+
+            let Some(archive) = self.archive.clone() else {
+                self.status = "Open a .CWN container first.".to_string();
+                self.status_kind = StatusKind::Warning;
+                return;
+            };
+
+            let Some(output) = self.extract_to.clone() else {
+                self.status = "Choose an extraction destination first.".to_string();
+                self.status_kind = StatusKind::Warning;
+                return;
+            };
+
+            let Some(index) = self.selected_archive_entry else {
+                self.status = "Select an archive entry first.".to_string();
+                self.status_kind = StatusKind::Warning;
+                return;
+            };
+
+            let Some(info) = self.archive_info.as_ref() else {
+                self.status = "Archive information is not available.".to_string();
+                self.status_kind = StatusKind::Warning;
+                return;
+            };
+
+            let Some(entry) = info.entries.get(index) else {
+                self.status = "The selected archive entry is no longer available.".to_string();
+                self.status_kind = StatusKind::Warning;
+                self.selected_archive_entry = None;
+                return;
+            };
+
+            if entry.is_directory {
+                self.status = "Select a file to extract, not a directory.".to_string();
+                self.status_kind = StatusKind::Warning;
+                return;
+            }
+
+            let selected_path = entry.path.clone();
+            let display_path = selected_path.clone();
+
+            let sender = self.task.sender.clone();
+
+            self.busy = true;
+            self.status_kind = StatusKind::Info;
+            self.current_operation = Some("Selected extraction".to_string());
+
+            self.progress_current = 0;
+            self.progress_total = 0;
+            self.progress_path = None;
+
+            thread::spawn(move || {
+                let _ = sender.send(GuiMessage::Started(format!(
+                    "Extracting selected entry: {display_path}"
+                )));
+
+                match cwn_universal_packer::commands::unpack::run_selected_with_progress(
+                    archive,
+                    output.clone(),
+                    selected_path,
+                    |event| {
+                        let _ = sender.send(GuiMessage::Progress(event));
+                    },
+                ) {
+                    Ok(()) => {
+                        let _ = sender.send(GuiMessage::Success {
+                            message: format!("Extracted selected entry to {}.", output.display()),
+                            archive: None,
+                        });
+                    }
+
+                    Err(error) => {
+                        let _ = sender.send(GuiMessage::Error(format!(
+                            "Selected extraction failed: {error}"
+                        )));
                     }
                 }
             });
@@ -782,8 +870,25 @@ mod desktop {
                     self.choose_extract_folder();
                 }
 
-                if ui.button("Extract").clicked() {
+                if ui.button("Extract All").clicked() {
                     self.start_extract();
+                }
+
+                let can_extract_selected = self.extract_to.is_some()
+                    && self
+                        .selected_archive_entry
+                        .and_then(|index| {
+                            self.archive_info
+                                .as_ref()
+                                .and_then(|info| info.entries.get(index))
+                        })
+                        .is_some_and(|entry| !entry.is_directory);
+
+                if ui
+                    .add_enabled(can_extract_selected, egui::Button::new("Extract Selected"))
+                    .clicked()
+                {
+                    self.start_extract_selected();
                 }
             });
         });
