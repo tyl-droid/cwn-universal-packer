@@ -24,6 +24,14 @@ mod desktop {
         Archive,
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum StatusKind {
+        Info,
+        Success,
+        Warning,
+        Error,
+    }
+
     pub struct CwnPackerApp {
         workspace: Workspace,
 
@@ -39,6 +47,7 @@ mod desktop {
         compression_level: i32,
 
         status: String,
+        status_kind: StatusKind,
         busy: bool,
         current_operation: Option<String>,
 
@@ -107,6 +116,23 @@ mod desktop {
             Color32::from_rgb(95, 220, 150)
         }
 
+        fn warning() -> Color32 {
+            Color32::from_rgb(245, 190, 85)
+        }
+
+        fn error() -> Color32 {
+            Color32::from_rgb(245, 95, 105)
+        }
+
+        fn status_color(&self) -> Color32 {
+            match self.status_kind {
+                StatusKind::Info => Self::accent(),
+                StatusKind::Success => Self::success(),
+                StatusKind::Warning => Self::warning(),
+                StatusKind::Error => Self::error(),
+            }
+        }
+
         fn muted() -> Color32 {
             Color32::from_rgb(145, 155, 170)
         }
@@ -127,6 +153,7 @@ mod desktop {
                 compression_level: 10,
 
                 status: "Ready.".to_string(),
+                status_kind: StatusKind::Info,
                 busy: false,
                 current_operation: None,
 
@@ -427,6 +454,7 @@ mod desktop {
                 match message {
                     GuiMessage::Started(message) => {
                         self.status = message;
+                        self.status_kind = StatusKind::Info;
                     }
 
                     GuiMessage::Progress(event) => match event {
@@ -464,6 +492,7 @@ mod desktop {
 
                     GuiMessage::Success { message, archive } => {
                         self.status = message;
+                        self.status_kind = StatusKind::Success;
 
                         if let Some(archive) = archive {
                             self.archive = Some(archive.clone());
@@ -492,6 +521,7 @@ mod desktop {
 
                     GuiMessage::Inspected { message, info } => {
                         self.status = message;
+                        self.status_kind = StatusKind::Success;
                         self.archive = Some(info.path.clone());
                         self.archive_info = Some(info);
 
@@ -501,6 +531,7 @@ mod desktop {
 
                     GuiMessage::Error(message) => {
                         self.status = message;
+                        self.status_kind = StatusKind::Error;
 
                         self.busy = false;
                         self.current_operation = None;
@@ -1088,7 +1119,7 @@ mod desktop {
                     }
 
                     ui.separator();
-                    ui.label(&self.status);
+                    ui.label(egui::RichText::new(&self.status).color(self.status_color()));
                 });
 
                 if self.progress_total > 0 {
