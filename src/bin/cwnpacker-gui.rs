@@ -31,6 +31,8 @@ mod desktop {
 
         archive: Option<PathBuf>,
         archive_info: Option<ContainerInfo>,
+        archive_search: String,
+        selected_archive_entry: Option<usize>,
         output: Option<PathBuf>,
         extract_to: Option<PathBuf>,
 
@@ -117,6 +119,8 @@ mod desktop {
 
                 archive: None,
                 archive_info: None,
+                archive_search: String::new(),
+                selected_archive_entry: None,
                 output: None,
                 extract_to: None,
 
@@ -197,6 +201,8 @@ mod desktop {
 
             self.archive = Some(path.clone());
             self.archive_info = None;
+            self.archive_search.clear();
+            self.selected_archive_entry = None;
             self.busy = true;
             self.current_operation = Some("Inspecting".to_string());
 
@@ -839,14 +845,84 @@ mod desktop {
 
         ui.add_space(18.0);
 
-        ui.label(
-            egui::RichText::new("ARCHIVE CONTENTS")
-                .small()
-                .strong()
-                .color(Self::accent()),
-        );
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("ARCHIVE CONTENTS")
+                    .small()
+                    .strong()
+                    .color(Self::accent()),
+            );
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.archive_search)
+                        .hint_text("Search files...")
+                        .desired_width(240.0),
+                );
+            });
+        });
 
         ui.add_space(8.0);
+
+        if let Some(index) = self.selected_archive_entry {
+            if let Some(entry) = info.entries.get(index) {
+                egui::Frame::group(ui.style())
+                    .corner_radius(CornerRadius::same(8))
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new("SELECTED ENTRY")
+                                .small()
+                                .strong()
+                                .color(Self::accent()),
+                        );
+
+                        ui.add_space(6.0);
+
+                        egui::Grid::new("selected_entry")
+                            .num_columns(2)
+                            .spacing([18.0, 6.0])
+                            .show(ui, |ui| {
+                                ui.label("Path");
+                                ui.label(egui::RichText::new(&entry.path).monospace());
+                                ui.end_row();
+
+                                ui.label("Type");
+                                ui.label(if entry.is_directory {
+                                    "Directory"
+                                } else {
+                                    &entry.file_type
+                                });
+                                ui.end_row();
+
+                                ui.label("Original");
+                                ui.label(if entry.is_directory {
+                                    "-".to_string()
+                                } else {
+                                    human_size(entry.original_size)
+                                });
+                                ui.end_row();
+
+                                ui.label("Stored");
+                                ui.label(if entry.is_directory {
+                                    "-".to_string()
+                                } else {
+                                    human_size(entry.packed_size)
+                                });
+                                ui.end_row();
+
+                                ui.label("Compression");
+                                ui.label(if entry.is_directory {
+                                    "-".to_string()
+                                } else {
+                                    entry.compression.to_uppercase()
+                                });
+                                ui.end_row();
+                            });
+                    });
+
+                ui.add_space(10.0);
+            }
+        }
 
         egui::ScrollArea::both().max_height(360.0).show(ui, |ui| {
             egui::Grid::new("archive_entries")
@@ -861,20 +937,52 @@ mod desktop {
                     ui.strong("Path");
                     ui.end_row();
 
-                    for entry in &info.entries {
+                    let query = self.archive_search.trim().to_ascii_lowercase();
+
+                    for (index, entry) in info.entries.iter().enumerate() {
+                        if !query.is_empty() {
+                            let matches = entry.path.to_ascii_lowercase().contains(&query)
+                                || entry.file_type.to_ascii_lowercase().contains(&query)
+                                || entry.compression.to_ascii_lowercase().contains(&query);
+
+                            if !matches {
+                                continue;
+                            }
+                        }
+
+                        let selected = self.selected_archive_entry == Some(index);
+
+                        let response = ui.selectable_label(
+                            selected,
+                            if entry.is_directory {
+                                "Directory"
+                            } else {
+                                &entry.file_type
+                            },
+                        );
+
+                        if response.clicked() {
+                            self.selected_archive_entry = Some(index);
+                        }
+
                         if entry.is_directory {
-                            ui.label("Directory");
                             ui.label("-");
                             ui.label("-");
                             ui.label("-");
                         } else {
-                            ui.label(&entry.file_type);
                             ui.label(human_size(entry.original_size));
                             ui.label(human_size(entry.packed_size));
                             ui.label(entry.compression.to_uppercase());
                         }
 
-                        ui.label(egui::RichText::new(&entry.path).monospace());
+                        let path_response = ui.selectable_label(
+                            selected,
+                            egui::RichText::new(&entry.path).monospace(),
+                        );
+
+                        if path_response.clicked() {
+                            self.selected_archive_entry = Some(index);
+                        }
 
                         ui.end_row();
                     }
