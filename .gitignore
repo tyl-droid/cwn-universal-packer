@@ -13,3 +13,4 @@ Corrupted.CWN
 
 # Rust build output
 target/
+detection-test/
