@@ -328,7 +328,13 @@ mod desktop {
                     "Extracting CWN container...".to_string(),
                 ));
 
-                match cwn_universal_packer::commands::unpack::run(archive, output.clone()) {
+                match cwn_universal_packer::commands::unpack::run_with_progress(
+                    archive,
+                    output.clone(),
+                    |event| {
+                        let _ = sender.send(GuiMessage::Progress(event));
+                    },
+                ) {
                     Ok(()) => {
                         let _ = sender.send(GuiMessage::Success {
                             message: format!("Extracted to {}.", output.display()),
