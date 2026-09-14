@@ -834,6 +834,19 @@ mod desktop {
                 ui.label(human_size(info.container_size));
                 ui.end_row();
 
+                ui.label("Payload Saved");
+
+                let saved = info.original_size.saturating_sub(info.payload_size);
+
+                let saved_percent = if info.original_size == 0 {
+                    0.0
+                } else {
+                    saved as f64 / info.original_size as f64 * 100.0
+                };
+
+                ui.label(format!("{} ({:.2}%)", human_size(saved), saved_percent));
+                ui.end_row();
+
                 ui.label("Zstandard Files");
                 ui.label(info.zstd_files.to_string());
                 ui.end_row();
@@ -916,6 +929,22 @@ mod desktop {
                                 } else {
                                     entry.compression.to_uppercase()
                                 });
+                                ui.end_row();
+
+                                ui.label("Space Saved");
+
+                                let saved_text = if entry.is_directory || entry.original_size == 0 {
+                                    "-".to_string()
+                                } else {
+                                    let saved =
+                                        entry.original_size.saturating_sub(entry.packed_size);
+
+                                    let percent = saved as f64 / entry.original_size as f64 * 100.0;
+
+                                    format!("{} ({:.2}%)", human_size(saved), percent)
+                                };
+
+                                ui.label(saved_text);
                                 ui.end_row();
                             });
                     });
