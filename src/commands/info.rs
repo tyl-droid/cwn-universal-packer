@@ -62,6 +62,9 @@ pub fn run(input: PathBuf) -> Result<()> {
     println!("{:<20} {}", "File", input.display());
     println!("{:<20} CWN", "Format");
     println!("{:<20} {}", "Format version", header.version);
+    println!("{:<20} {}", "Package", manifest.package_name);
+    println!("{:<20} {}", "Package version", manifest.package_version);
+    println!("{:<20} {}", "Publisher", manifest.publisher);
     println!("{:<20} {}", "Producer", manifest.producer);
 
     println!();

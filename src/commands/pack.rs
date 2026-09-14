@@ -47,7 +47,13 @@ pub fn run(inputs: Vec<PathBuf>, output: PathBuf, level: i32) -> Result<()> {
         }
     }
 
-    let manifest = CwnManifest::new(entries);
+    let package_name = output
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("CWN Package")
+        .to_string();
+
+    let manifest = CwnManifest::new(entries, package_name);
 
     let manifest_bytes =
         serde_json::to_vec_pretty(&manifest).context("failed to encode manifest")?;

@@ -1,6 +1,6 @@
 [package]
 name = "cwn-universal-packer"
-version = "0.5.0-alpha"
+version = "0.6.0-alpha"
 edition = "2024"
 
 [dependencies]
@@ -17,3 +17,6 @@ zstd = "0.14.0"
 [[bin]]
 name = "cwnpack"
 path = "src/main.rs"
+
+[dev-dependencies]
+assert_cmd = "2.2.2"

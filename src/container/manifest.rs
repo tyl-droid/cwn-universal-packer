@@ -4,7 +4,19 @@ use serde::{Deserialize, Serialize};
 pub struct CwnManifest {
     pub format: String,
     pub version: u16,
+
+    #[serde(default = "default_producer")]
     pub producer: String,
+
+    #[serde(default = "default_package_name")]
+    pub package_name: String,
+
+    #[serde(default = "default_package_version")]
+    pub package_version: String,
+
+    #[serde(default = "default_publisher")]
+    pub publisher: String,
+
     pub entries: Vec<CwnEntry>,
 }
 
@@ -37,12 +49,31 @@ fn default_file_type() -> String {
     "Binary / Other".to_string()
 }
 
+fn default_producer() -> String {
+    "CWN Universal Packer".to_string()
+}
+
+fn default_package_name() -> String {
+    "Legacy CWN Package".to_string()
+}
+
+fn default_package_version() -> String {
+    "unknown".to_string()
+}
+
+fn default_publisher() -> String {
+    "Community Watch Network".to_string()
+}
+
 impl CwnManifest {
-    pub fn new(entries: Vec<CwnEntry>) -> Self {
+    pub fn new(entries: Vec<CwnEntry>, package_name: String) -> Self {
         Self {
             format: "CWN".to_string(),
             version: 1,
-            producer: "Community Watch Network".to_string(),
+            producer: format!("CWN Universal Packer {}", env!("CARGO_PKG_VERSION")),
+            package_name,
+            package_version: env!("CARGO_PKG_VERSION").to_string(),
+            publisher: "Community Watch Network".to_string(),
             entries,
         }
     }

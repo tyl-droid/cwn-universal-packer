@@ -13,7 +13,7 @@ use std::path::PathBuf;
     version,
     author = "Community Watch Network",
     about = "CWN Universal Packer",
-    long_about = "Pack, inspect, verify and extract arbitrary files and directories using the CWN container format."
+    long_about = "Pack, inspect, verify, test and extract arbitrary files and directories using the CWN container format."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -55,6 +55,9 @@ enum Commands {
 
     /// Verify every file using SHA-256.
     Verify { input: PathBuf },
+
+    /// Test CWN container structure without extracting it.
+    Test { input: PathBuf },
 }
 
 fn main() -> Result<()> {
@@ -74,5 +77,7 @@ fn main() -> Result<()> {
         Commands::Info { input } => commands::info::run(input),
 
         Commands::Verify { input } => commands::verify::run(input),
+
+        Commands::Test { input } => commands::test::run(input),
     }
 }

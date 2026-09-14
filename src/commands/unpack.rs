@@ -33,6 +33,13 @@ pub fn run(input: PathBuf, output: PathBuf) -> Result<()> {
 
                 archive.seek(SeekFrom::Start(entry.data_offset))?;
 
+                if destination.exists() {
+                    bail!(
+                        "refusing to overwrite existing file: {}",
+                        destination.display()
+                    );
+                }
+
                 let mut output_file = File::create(&destination)?;
                 let mut hasher = Sha256::new();
                 let mut written = 0u64;
