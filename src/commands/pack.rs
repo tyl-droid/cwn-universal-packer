@@ -217,7 +217,7 @@ fn pack_file(
     entries.push(CwnEntry {
         path: archive_path,
         kind: EntryKind::File,
-        file_type: detect_file_type(source).to_string(),
+        file_type: detect_file_type(source),
         original_size,
         packed_size,
         data_offset,

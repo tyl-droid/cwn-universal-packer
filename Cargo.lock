@@ -163,7 +163,7 @@ dependencies = [
 
 [[package]]
 name = "cwn-universal-packer"
-version = "0.3.0-alpha"
+version = "0.4.0-alpha"
 dependencies = [
  "anyhow",
  "clap",
