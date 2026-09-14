@@ -1,6 +1,6 @@
 use crate::container;
 use crate::container::manifest::EntryKind;
-use crate::security::hash::sha256_reader;
+use crate::security::hash::sha256_reader_counted;
 
 use anyhow::{Context, Result, bail};
 use std::fs::File;
@@ -30,19 +30,24 @@ pub fn run(input: PathBuf) -> Result<()> {
             .as_ref()
             .context("file entry missing SHA-256")?;
 
-        let actual = match entry.compression.as_str() {
+        let result = match entry.compression.as_str() {
             "zstd" => {
                 let limited = (&mut archive).take(entry.packed_size);
 
-                let mut decoder = zstd::stream::read::Decoder::new(limited)
+                let decoder = zstd::stream::read::Decoder::new(limited)
                     .with_context(|| format!("failed to decode {}", entry.path))?;
 
-                sha256_reader(&mut decoder)?
+                // Never permit decompression to exceed the declared size
+                // by more than one byte.
+                let mut bounded = decoder.take(entry.original_size.saturating_add(1));
+
+                sha256_reader_counted(&mut bounded)?
             }
 
             "none" => {
                 let mut limited = (&mut archive).take(entry.packed_size);
-                sha256_reader(&mut limited)?
+
+                sha256_reader_counted(&mut limited)?
             }
 
             other => {
@@ -50,7 +55,18 @@ pub fn run(input: PathBuf) -> Result<()> {
             }
         };
 
-        if actual == *expected {
+        let (actual_hash, actual_size) = result;
+
+        if actual_size != entry.original_size {
+            println!(
+                "[FAIL] {} (size {} != {})",
+                entry.path, actual_size, entry.original_size
+            );
+            failed += 1;
+            continue;
+        }
+
+        if actual_hash == *expected {
             println!("[OK]   {}", entry.path);
             valid += 1;
         } else {

@@ -75,6 +75,12 @@ fn validate_manifest(
                     bail!("file entry missing SHA-256: {}", entry.path);
                 }
 
+                let sha256 = entry.sha256.as_ref().unwrap();
+
+                if sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    bail!("invalid SHA-256 metadata for {}", entry.path);
+                }
+
                 match entry.compression.as_str() {
                     "none" | "zstd" => {}
                     other => {

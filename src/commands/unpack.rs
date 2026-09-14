@@ -59,6 +59,12 @@ pub fn run(input: PathBuf, output: PathBuf) -> Result<()> {
                                 break;
                             }
 
+                            if written.saturating_add(count as u64) > entry.original_size {
+                                let _ = fs::remove_file(&destination);
+
+                                bail!("decompressed size exceeds declared size for {}", entry.path);
+                            }
+
                             output_file.write_all(&buffer[..count])?;
                             hasher.update(&buffer[..count]);
                             written += count as u64;
@@ -73,6 +79,12 @@ pub fn run(input: PathBuf, output: PathBuf) -> Result<()> {
 
                             if count == 0 {
                                 break;
+                            }
+
+                            if written.saturating_add(count as u64) > entry.original_size {
+                                let _ = fs::remove_file(&destination);
+
+                                bail!("decompressed size exceeds declared size for {}", entry.path);
                             }
 
                             output_file.write_all(&buffer[..count])?;
