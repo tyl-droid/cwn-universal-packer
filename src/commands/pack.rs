@@ -11,9 +11,29 @@ use tempfile::tempfile;
 use walkdir::WalkDir;
 
 pub fn run(inputs: Vec<PathBuf>, output: PathBuf, level: i32) -> Result<()> {
+    run_with_progress(inputs, output, level, |_| {})
+}
+
+pub fn run_with_progress<F>(
+    inputs: Vec<PathBuf>,
+    output: PathBuf,
+    level: i32,
+    mut progress: F,
+) -> Result<()>
+where
+    F: FnMut(crate::engine::progress::ProgressEvent),
+{
     if inputs.is_empty() {
         bail!("no input files or directories were provided");
     }
+
+    let total_files = count_input_files(&inputs)?;
+    let mut current_file = 0usize;
+
+    progress(crate::engine::progress::ProgressEvent::Started {
+        operation: "Packing".to_string(),
+        total_items: Some(total_files),
+    });
 
     if output.exists() {
         bail!("output already exists: {}", output.display());
@@ -41,9 +61,26 @@ pub fn run(inputs: Vec<PathBuf>, output: PathBuf, level: i32) -> Result<()> {
                 .to_string_lossy()
                 .to_string();
 
-            pack_file(&input, archive_path, &mut writer, &mut entries, level)?;
+            pack_file(
+                &input,
+                archive_path,
+                &mut writer,
+                &mut entries,
+                level,
+                &mut current_file,
+                total_files,
+                &mut progress,
+            )?;
         } else if input.is_dir() {
-            pack_directory(&input, &mut writer, &mut entries, level)?;
+            pack_directory(
+                &input,
+                &mut writer,
+                &mut entries,
+                level,
+                &mut current_file,
+                total_files,
+                &mut progress,
+            )?;
         }
     }
 
@@ -122,15 +159,23 @@ pub fn run(inputs: Vec<PathBuf>, output: PathBuf, level: i32) -> Result<()> {
     println!();
     println!("CWN container created successfully.");
 
+    progress(crate::engine::progress::ProgressEvent::Finished);
+
     Ok(())
 }
 
-fn pack_directory(
+fn pack_directory<F>(
     root: &Path,
     writer: &mut BufWriter<File>,
     entries: &mut Vec<CwnEntry>,
     level: i32,
-) -> Result<()> {
+    current_file: &mut usize,
+    total_files: usize,
+    progress: &mut F,
+) -> Result<()>
+where
+    F: FnMut(crate::engine::progress::ProgressEvent),
+{
     let parent = root.parent().unwrap_or_else(|| Path::new(""));
 
     for item in WalkDir::new(root).follow_links(false) {
@@ -155,20 +200,43 @@ fn pack_directory(
                 sha256: None,
             });
         } else if item.file_type().is_file() {
-            pack_file(path, archive_path, writer, entries, level)?;
+            pack_file(
+                path,
+                archive_path,
+                writer,
+                entries,
+                level,
+                current_file,
+                total_files,
+                progress,
+            )?;
         }
     }
 
     Ok(())
 }
 
-fn pack_file(
+fn pack_file<F>(
     source: &Path,
     archive_path: String,
     writer: &mut BufWriter<File>,
     entries: &mut Vec<CwnEntry>,
     level: i32,
-) -> Result<()> {
+    current_file: &mut usize,
+    total_files: usize,
+    progress: &mut F,
+) -> Result<()>
+where
+    F: FnMut(crate::engine::progress::ProgressEvent),
+{
+    *current_file += 1;
+
+    progress(crate::engine::progress::ProgressEvent::Item {
+        current: *current_file,
+        total: total_files,
+        path: archive_path.clone(),
+    });
+
     let original_size = fs::metadata(source)?.len();
 
     let mut hash_file = File::open(source)?;
@@ -232,4 +300,24 @@ fn pack_file(
     });
 
     Ok(())
+}
+
+fn count_input_files(inputs: &[PathBuf]) -> Result<usize> {
+    let mut total = 0usize;
+
+    for input in inputs {
+        if input.is_file() {
+            total += 1;
+        } else if input.is_dir() {
+            for item in WalkDir::new(input).follow_links(false) {
+                let item = item?;
+
+                if item.file_type().is_file() {
+                    total += 1;
+                }
+            }
+        }
+    }
+
+    Ok(total)
 }

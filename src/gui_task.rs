@@ -1,3 +1,4 @@
+use crate::engine::progress::ProgressEvent;
 use crate::engine::types::ContainerInfo;
 
 use std::path::PathBuf;
@@ -6,6 +7,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 #[derive(Debug)]
 pub enum GuiMessage {
     Started(String),
+
+    Progress(ProgressEvent),
 
     Success {
         message: String,

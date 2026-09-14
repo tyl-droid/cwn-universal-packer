@@ -31,6 +31,10 @@ mod desktop {
         busy: bool,
         current_operation: Option<String>,
 
+        progress_current: usize,
+        progress_total: usize,
+        progress_path: Option<String>,
+
         task: GuiTask,
     }
 
@@ -55,6 +59,10 @@ mod desktop {
                 status: "Ready.".to_string(),
                 busy: false,
                 current_operation: None,
+
+                progress_current: 0,
+                progress_total: 0,
+                progress_path: None,
 
                 task: GuiTask::new(),
             }
@@ -182,12 +190,23 @@ mod desktop {
             self.busy = true;
             self.current_operation = Some("Packing".to_string());
 
+            self.progress_current = 0;
+            self.progress_total = 0;
+            self.progress_path = None;
+
             thread::spawn(move || {
                 let _ = sender.send(GuiMessage::Started(
                     "Packing files into CWN container...".to_string(),
                 ));
 
-                match cwn_universal_packer::commands::pack::run(inputs, output.clone(), level) {
+                match cwn_universal_packer::commands::pack::run_with_progress(
+                    inputs,
+                    output.clone(),
+                    level,
+                    |event| {
+                        let _ = sender.send(GuiMessage::Progress(event));
+                    },
+                ) {
                     Ok(()) => {
                         let _ = sender.send(GuiMessage::Success {
                             message: format!("Created {} successfully.", output.display()),
@@ -322,6 +341,39 @@ mod desktop {
                         self.status = message;
                     }
 
+                    GuiMessage::Progress(event) => match event {
+                        cwn_universal_packer::engine::progress::ProgressEvent::Started {
+                            operation,
+                            total_items,
+                        } => {
+                            self.current_operation = Some(operation);
+                            self.progress_current = 0;
+                            self.progress_total = total_items.unwrap_or(0);
+                            self.progress_path = None;
+                        }
+
+                        cwn_universal_packer::engine::progress::ProgressEvent::Item {
+                            current,
+                            total,
+                            path,
+                        } => {
+                            self.progress_current = current;
+                            self.progress_total = total;
+                            self.progress_path = Some(path);
+                        }
+
+                        cwn_universal_packer::engine::progress::ProgressEvent::Bytes {
+                            processed: _,
+                            total: _,
+                        } => {}
+
+                        cwn_universal_packer::engine::progress::ProgressEvent::Message(message) => {
+                            self.status = message;
+                        }
+
+                        cwn_universal_packer::engine::progress::ProgressEvent::Finished => {}
+                    },
+
                     GuiMessage::Success { message, archive } => {
                         self.status = message;
 
@@ -345,6 +397,9 @@ mod desktop {
 
                         self.busy = false;
                         self.current_operation = None;
+                        self.progress_current = 0;
+                        self.progress_total = 0;
+                        self.progress_path = None;
                     }
 
                     GuiMessage::Inspected { message, info } => {
@@ -361,6 +416,9 @@ mod desktop {
 
                         self.busy = false;
                         self.current_operation = None;
+                        self.progress_current = 0;
+                        self.progress_total = 0;
+                        self.progress_path = None;
                     }
                 }
             }
@@ -424,6 +482,25 @@ mod desktop {
                     ui.separator();
                     ui.label(&self.status);
                 });
+
+                if self.progress_total > 0 {
+                    let fraction = self.progress_current as f32 / self.progress_total as f32;
+
+                    ui.add_space(4.0);
+
+                    ui.add(
+                        egui::ProgressBar::new(fraction)
+                            .show_percentage()
+                            .text(format!(
+                                "{} / {} files",
+                                self.progress_current, self.progress_total
+                            )),
+                    );
+
+                    if let Some(path) = &self.progress_path {
+                        ui.small(path);
+                    }
+                }
 
                 ui.add_space(6.0);
             });
