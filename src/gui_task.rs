@@ -1,3 +1,5 @@
+use crate::engine::types::ContainerInfo;
+
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 
@@ -8,6 +10,11 @@ pub enum GuiMessage {
     Success {
         message: String,
         archive: Option<PathBuf>,
+    },
+
+    Inspected {
+        message: String,
+        info: ContainerInfo,
     },
 
     Error(String),

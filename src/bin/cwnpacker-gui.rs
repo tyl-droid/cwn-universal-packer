@@ -8,6 +8,8 @@ fn main() {
 
 #[cfg(not(target_os = "android"))]
 mod desktop {
+    use cwn_universal_packer::engine::types::ContainerInfo;
+    use cwn_universal_packer::filesystem::size::human_size;
     use cwn_universal_packer::gui_task::{GuiMessage, GuiTask};
     use eframe::egui;
 
@@ -19,6 +21,7 @@ mod desktop {
         inputs: Vec<PathBuf>,
 
         archive: Option<PathBuf>,
+        archive_info: Option<ContainerInfo>,
         output: Option<PathBuf>,
         extract_to: Option<PathBuf>,
 
@@ -43,6 +46,7 @@ mod desktop {
                 inputs: Vec::new(),
 
                 archive: None,
+                archive_info: None,
                 output: None,
                 extract_to: None,
 
@@ -110,14 +114,40 @@ mod desktop {
                 return;
             }
 
-            if let Some(path) = rfd::FileDialog::new()
+            let Some(path) = rfd::FileDialog::new()
                 .add_filter("CWN Container", &["CWN", "cwn"])
                 .pick_file()
-            {
-                self.archive = Some(path);
+            else {
+                return;
+            };
 
-                self.status = "CWN container selected.".to_string();
-            }
+            self.archive = Some(path.clone());
+            self.archive_info = None;
+            self.busy = true;
+            self.current_operation = Some("Inspecting".to_string());
+
+            let sender = self.task.sender.clone();
+
+            thread::spawn(move || {
+                let _ = sender.send(GuiMessage::Started(
+                    "Inspecting CWN container...".to_string(),
+                ));
+
+                match cwn_universal_packer::engine::inspect::inspect_container(&path) {
+                    Ok(info) => {
+                        let _ = sender.send(GuiMessage::Inspected {
+                            message: "CWN container loaded.".to_string(),
+                            info,
+                        });
+                    }
+
+                    Err(error) => {
+                        let _ = sender.send(GuiMessage::Error(format!(
+                            "Failed to inspect container: {error}"
+                        )));
+                    }
+                }
+            });
         }
 
         fn choose_extract_folder(&mut self) {
@@ -296,8 +326,31 @@ mod desktop {
                         self.status = message;
 
                         if let Some(archive) = archive {
-                            self.archive = Some(archive);
+                            self.archive = Some(archive.clone());
+
+                            match cwn_universal_packer::engine::inspect::inspect_container(&archive)
+                            {
+                                Ok(info) => {
+                                    self.archive_info = Some(info);
+                                }
+
+                                Err(error) => {
+                                    self.archive_info = None;
+
+                                    self.status =
+                                        format!("Created archive, but inspection failed: {error}");
+                                }
+                            }
                         }
+
+                        self.busy = false;
+                        self.current_operation = None;
+                    }
+
+                    GuiMessage::Inspected { message, info } => {
+                        self.status = message;
+                        self.archive = Some(info.path.clone());
+                        self.archive_info = Some(info);
 
                         self.busy = false;
                         self.current_operation = None;
@@ -512,6 +565,105 @@ mod desktop {
                         }
                     });
                 });
+
+                if let Some(info) = &self.archive_info {
+                    ui.add_space(14.0);
+
+                    ui.heading("Container Details");
+                    ui.separator();
+
+                    egui::Grid::new("container_info")
+                        .num_columns(2)
+                        .striped(true)
+                        .show(ui, |ui| {
+                            ui.label("Package");
+                            ui.label(&info.package_name);
+                            ui.end_row();
+
+                            ui.label("Package Version");
+                            ui.label(&info.package_version);
+                            ui.end_row();
+
+                            ui.label("Publisher");
+                            ui.label(&info.publisher);
+                            ui.end_row();
+
+                            ui.label("Producer");
+                            ui.label(&info.producer);
+                            ui.end_row();
+
+                            ui.label("Format");
+                            ui.label(format!("CWN v{}", info.format_version));
+                            ui.end_row();
+
+                            ui.label("Files");
+                            ui.label(info.files.to_string());
+                            ui.end_row();
+
+                            ui.label("Directories");
+                            ui.label(info.directories.to_string());
+                            ui.end_row();
+
+                            ui.label("Original Size");
+                            ui.label(human_size(info.original_size));
+                            ui.end_row();
+
+                            ui.label("Payload Size");
+                            ui.label(human_size(info.payload_size));
+                            ui.end_row();
+
+                            ui.label("Container Size");
+                            ui.label(human_size(info.container_size));
+                            ui.end_row();
+
+                            ui.label("Zstandard Files");
+                            ui.label(info.zstd_files.to_string());
+                            ui.end_row();
+
+                            ui.label("Stored Files");
+                            ui.label(info.stored_files.to_string());
+                            ui.end_row();
+                        });
+
+                    ui.add_space(14.0);
+
+                    ui.heading("Archive Contents");
+                    ui.separator();
+
+                    egui::ScrollArea::both().max_height(260.0).show(ui, |ui| {
+                        egui::Grid::new("archive_entries")
+                            .striped(true)
+                            .min_col_width(90.0)
+                            .show(ui, |ui| {
+                                ui.strong("Type");
+                                ui.strong("Original");
+                                ui.strong("Stored");
+                                ui.strong("Method");
+                                ui.strong("Path");
+                                ui.end_row();
+
+                                for entry in &info.entries {
+                                    if entry.is_directory {
+                                        ui.label("Directory");
+                                        ui.label("-");
+                                        ui.label("-");
+                                        ui.label("-");
+                                    } else {
+                                        ui.label(&entry.file_type);
+
+                                        ui.label(human_size(entry.original_size));
+
+                                        ui.label(human_size(entry.packed_size));
+
+                                        ui.label(entry.compression.to_uppercase());
+                                    }
+
+                                    ui.label(&entry.path);
+                                    ui.end_row();
+                                }
+                            });
+                    });
+                }
 
                 if let Some(folder) = &self.extract_to {
                     ui.label(format!("Extraction destination: {}", folder.display()));
