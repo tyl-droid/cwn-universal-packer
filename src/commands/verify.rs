@@ -25,17 +25,30 @@ pub fn run(input: PathBuf) -> Result<()> {
 
         archive.seek(SeekFrom::Start(entry.data_offset))?;
 
-        let limited = (&mut archive).take(entry.packed_size);
-
-        let mut decoder = zstd::stream::read::Decoder::new(limited)
-            .with_context(|| format!("failed to decode {}", entry.path))?;
-
-        let actual = sha256_reader(&mut decoder)?;
-
         let expected = entry
             .sha256
             .as_ref()
             .context("file entry missing SHA-256")?;
+
+        let actual = match entry.compression.as_str() {
+            "zstd" => {
+                let limited = (&mut archive).take(entry.packed_size);
+
+                let mut decoder = zstd::stream::read::Decoder::new(limited)
+                    .with_context(|| format!("failed to decode {}", entry.path))?;
+
+                sha256_reader(&mut decoder)?
+            }
+
+            "none" => {
+                let mut limited = (&mut archive).take(entry.packed_size);
+                sha256_reader(&mut limited)?
+            }
+
+            other => {
+                bail!("unsupported compression '{}' for {}", other, entry.path);
+            }
+        };
 
         if actual == *expected {
             println!("[OK]   {}", entry.path);

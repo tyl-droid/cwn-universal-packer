@@ -33,28 +33,52 @@ pub fn run(input: PathBuf, output: PathBuf) -> Result<()> {
 
                 archive.seek(SeekFrom::Start(entry.data_offset))?;
 
-                let limited = (&mut archive).take(entry.packed_size);
-
-                let mut decoder = zstd::stream::read::Decoder::new(limited)
-                    .with_context(|| format!("failed to decode {}", entry.path))?;
-
                 let mut output_file = File::create(&destination)?;
-
                 let mut hasher = Sha256::new();
-                let mut buffer = [0u8; 64 * 1024];
                 let mut written = 0u64;
+                let mut buffer = [0u8; 64 * 1024];
 
-                loop {
-                    let count = decoder.read(&mut buffer)?;
+                match entry.compression.as_str() {
+                    "zstd" => {
+                        let limited = (&mut archive).take(entry.packed_size);
 
-                    if count == 0 {
-                        break;
+                        let mut decoder = zstd::stream::read::Decoder::new(limited)
+                            .with_context(|| format!("failed to decode {}", entry.path))?;
+
+                        loop {
+                            let count = decoder.read(&mut buffer)?;
+
+                            if count == 0 {
+                                break;
+                            }
+
+                            output_file.write_all(&buffer[..count])?;
+                            hasher.update(&buffer[..count]);
+                            written += count as u64;
+                        }
                     }
 
-                    output_file.write_all(&buffer[..count])?;
-                    hasher.update(&buffer[..count]);
+                    "none" => {
+                        let mut limited = (&mut archive).take(entry.packed_size);
 
-                    written += count as u64;
+                        loop {
+                            let count = limited.read(&mut buffer)?;
+
+                            if count == 0 {
+                                break;
+                            }
+
+                            output_file.write_all(&buffer[..count])?;
+                            hasher.update(&buffer[..count]);
+                            written += count as u64;
+                        }
+                    }
+
+                    other => {
+                        let _ = fs::remove_file(&destination);
+
+                        bail!("unsupported compression '{}' for {}", other, entry.path);
+                    }
                 }
 
                 output_file.flush()?;
@@ -78,7 +102,7 @@ pub fn run(input: PathBuf, output: PathBuf) -> Result<()> {
                     bail!("SHA-256 verification failed for {}", entry.path);
                 }
 
-                println!("[OK]   {}", entry.path);
+                println!("[OK]   {} [{}]", entry.path, entry.compression);
             }
         }
     }
