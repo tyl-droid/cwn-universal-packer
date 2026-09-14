@@ -41,6 +41,21 @@ mod desktop {
         Stored,
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum ArchiveSortColumn {
+        Type,
+        OriginalSize,
+        PackedSize,
+        Compression,
+        Path,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum SortDirection {
+        Ascending,
+        Descending,
+    }
+
     pub struct CwnPackerApp {
         workspace: Workspace,
 
@@ -50,6 +65,8 @@ mod desktop {
         archive_info: Option<ContainerInfo>,
         archive_search: String,
         archive_filter: ArchiveFilter,
+        archive_sort_column: ArchiveSortColumn,
+        archive_sort_direction: SortDirection,
         selected_archive_entry: Option<usize>,
         output: Option<PathBuf>,
         extract_to: Option<PathBuf>,
@@ -157,6 +174,8 @@ mod desktop {
                 archive_info: None,
                 archive_search: String::new(),
                 archive_filter: ArchiveFilter::All,
+                archive_sort_column: ArchiveSortColumn::Path,
+                archive_sort_direction: SortDirection::Ascending,
                 selected_archive_entry: None,
                 output: None,
                 extract_to: None,
@@ -174,6 +193,31 @@ mod desktop {
 
                 task: GuiTask::new(),
             }
+        }
+
+        fn set_archive_sort(&mut self, column: ArchiveSortColumn) {
+            if self.archive_sort_column == column {
+                self.archive_sort_direction = match self.archive_sort_direction {
+                    SortDirection::Ascending => SortDirection::Descending,
+                    SortDirection::Descending => SortDirection::Ascending,
+                };
+            } else {
+                self.archive_sort_column = column;
+                self.archive_sort_direction = SortDirection::Ascending;
+            }
+        }
+
+        fn archive_sort_label(&self, column: ArchiveSortColumn, label: &str) -> String {
+            if self.archive_sort_column != column {
+                return format!("{label} ↕");
+            }
+
+            let indicator = match self.archive_sort_direction {
+                SortDirection::Ascending => "↑",
+                SortDirection::Descending => "↓",
+            };
+
+            format!("{label} {indicator}")
         }
 
         fn add_input(&mut self, path: PathBuf) {
@@ -241,6 +285,8 @@ mod desktop {
             self.archive_info = None;
             self.archive_search.clear();
             self.archive_filter = ArchiveFilter::All;
+            self.archive_sort_column = ArchiveSortColumn::Path;
+            self.archive_sort_direction = SortDirection::Ascending;
             self.selected_archive_entry = None;
             self.busy = true;
             self.current_operation = Some("Inspecting".to_string());
@@ -1169,11 +1215,64 @@ mod desktop {
             search_matches && filter_matches
         };
 
-        let visible_entries = info
+        let mut visible_indices: Vec<usize> = info
             .entries
             .iter()
-            .filter(|entry| entry_matches(entry))
-            .count();
+            .enumerate()
+            .filter_map(|(index, entry)| entry_matches(entry).then_some(index))
+            .collect();
+
+        visible_indices.sort_by(|left_index, right_index| {
+            let left = &info.entries[*left_index];
+            let right = &info.entries[*right_index];
+
+            let ordering = match self.archive_sort_column {
+                ArchiveSortColumn::Type => {
+                    let left_type = if left.is_directory {
+                        "directory"
+                    } else {
+                        left.file_type.as_str()
+                    };
+
+                    let right_type = if right.is_directory {
+                        "directory"
+                    } else {
+                        right.file_type.as_str()
+                    };
+
+                    left_type
+                        .to_ascii_lowercase()
+                        .cmp(&right_type.to_ascii_lowercase())
+                }
+
+                ArchiveSortColumn::OriginalSize => left.original_size.cmp(&right.original_size),
+
+                ArchiveSortColumn::PackedSize => left.packed_size.cmp(&right.packed_size),
+
+                ArchiveSortColumn::Compression => left
+                    .compression
+                    .to_ascii_lowercase()
+                    .cmp(&right.compression.to_ascii_lowercase()),
+
+                ArchiveSortColumn::Path => left
+                    .path
+                    .to_ascii_lowercase()
+                    .cmp(&right.path.to_ascii_lowercase()),
+            };
+
+            let ordering = ordering.then_with(|| {
+                left.path
+                    .to_ascii_lowercase()
+                    .cmp(&right.path.to_ascii_lowercase())
+            });
+
+            match self.archive_sort_direction {
+                SortDirection::Ascending => ordering,
+                SortDirection::Descending => ordering.reverse(),
+            }
+        });
+
+        let visible_entries = visible_indices.len();
 
         ui.horizontal(|ui| {
             ui.label(
@@ -1197,23 +1296,55 @@ mod desktop {
 
         ui.add_space(6.0);
 
+        let mut requested_sort = None;
+
         egui::ScrollArea::both().max_height(360.0).show(ui, |ui| {
             egui::Grid::new("archive_entries")
                 .striped(true)
                 .min_col_width(90.0)
                 .spacing([16.0, 7.0])
                 .show(ui, |ui| {
-                    ui.strong("Type");
-                    ui.strong("Original");
-                    ui.strong("Stored");
-                    ui.strong("Method");
-                    ui.strong("Path");
+                    if ui
+                        .button(self.archive_sort_label(ArchiveSortColumn::Type, "Type"))
+                        .clicked()
+                    {
+                        requested_sort = Some(ArchiveSortColumn::Type);
+                    }
+
+                    if ui
+                        .button(
+                            self.archive_sort_label(ArchiveSortColumn::OriginalSize, "Original"),
+                        )
+                        .clicked()
+                    {
+                        requested_sort = Some(ArchiveSortColumn::OriginalSize);
+                    }
+
+                    if ui
+                        .button(self.archive_sort_label(ArchiveSortColumn::PackedSize, "Stored"))
+                        .clicked()
+                    {
+                        requested_sort = Some(ArchiveSortColumn::PackedSize);
+                    }
+
+                    if ui
+                        .button(self.archive_sort_label(ArchiveSortColumn::Compression, "Method"))
+                        .clicked()
+                    {
+                        requested_sort = Some(ArchiveSortColumn::Compression);
+                    }
+
+                    if ui
+                        .button(self.archive_sort_label(ArchiveSortColumn::Path, "Path"))
+                        .clicked()
+                    {
+                        requested_sort = Some(ArchiveSortColumn::Path);
+                    }
+
                     ui.end_row();
 
-                    for (index, entry) in info.entries.iter().enumerate() {
-                        if !entry_matches(entry) {
-                            continue;
-                        }
+                    for index in visible_indices.iter().copied() {
+                        let entry = &info.entries[index];
 
                         let selected = self.selected_archive_entry == Some(index);
 
@@ -1253,6 +1384,10 @@ mod desktop {
                     }
                 });
         });
+
+        if let Some(column) = requested_sort {
+            self.set_archive_sort(column);
+        }
     }
 
     impl eframe::App for CwnPackerApp {
