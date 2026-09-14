@@ -1,5 +1,5 @@
 use crate::container::header::CwnHeader;
-use crate::container::manifest::{CwnEntry, CwnManifest, EntryKind};
+use crate::container::manifest::{CwnEntry, CwnManifest, EntryKind, PackageMetadata};
 use crate::filesystem::filetype::detect_file_type;
 use crate::security::hash::sha256_reader;
 
@@ -18,6 +18,36 @@ pub fn run_with_progress<F>(
     inputs: Vec<PathBuf>,
     output: PathBuf,
     level: i32,
+    progress: F,
+) -> Result<()>
+where
+    F: FnMut(crate::engine::progress::ProgressEvent),
+{
+    let package_name = default_package_name(&output);
+
+    let metadata = PackageMetadata::new(
+        package_name,
+        env!("CARGO_PKG_VERSION"),
+        "Community Watch Network",
+    );
+
+    run_with_metadata_and_progress(inputs, output, level, metadata, progress)
+}
+
+pub fn run_with_metadata(
+    inputs: Vec<PathBuf>,
+    output: PathBuf,
+    level: i32,
+    metadata: PackageMetadata,
+) -> Result<()> {
+    run_with_metadata_and_progress(inputs, output, level, metadata, |_| {})
+}
+
+pub fn run_with_metadata_and_progress<F>(
+    inputs: Vec<PathBuf>,
+    output: PathBuf,
+    level: i32,
+    metadata: PackageMetadata,
     mut progress: F,
 ) -> Result<()>
 where
@@ -26,6 +56,8 @@ where
     if inputs.is_empty() {
         bail!("no input files or directories were provided");
     }
+
+    let metadata = metadata.validate()?;
 
     let total_files = count_input_files(&inputs)?;
     let mut current_file = 0usize;
@@ -84,13 +116,7 @@ where
         }
     }
 
-    let package_name = output
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .unwrap_or("CWN Package")
-        .to_string();
-
-    let manifest = CwnManifest::new(entries, package_name);
+    let manifest = CwnManifest::with_metadata(entries, metadata);
 
     let manifest_bytes =
         serde_json::to_vec_pretty(&manifest).context("failed to encode manifest")?;
@@ -147,6 +173,9 @@ where
     println!("CWN Universal Packer");
     println!("────────────────────────────────────────");
     println!("Output:          {}", output.display());
+    println!("Package:         {}", manifest.package_name);
+    println!("Version:         {}", manifest.package_version);
+    println!("Publisher:       {}", manifest.publisher);
     println!("Entries:         {}", manifest.entries.len());
     println!("Original size:   {} bytes", original_size);
     println!("Payload size:    {} bytes", payload_size);
@@ -162,6 +191,14 @@ where
     progress(crate::engine::progress::ProgressEvent::Finished);
 
     Ok(())
+}
+
+fn default_package_name(output: &Path) -> String {
+    output
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("CWN Package")
+        .to_string()
 }
 
 fn pack_directory<F>(

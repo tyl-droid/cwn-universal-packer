@@ -8,6 +8,7 @@ fn main() {
 
 #[cfg(not(target_os = "android"))]
 mod desktop {
+    use cwn_universal_packer::container::manifest::PackageMetadata;
     use cwn_universal_packer::engine::types::ContainerInfo;
     use cwn_universal_packer::filesystem::size::human_size;
     use cwn_universal_packer::gui_task::{GuiMessage, GuiTask};
@@ -70,6 +71,10 @@ mod desktop {
         selected_archive_entry: Option<usize>,
         output: Option<PathBuf>,
         extract_to: Option<PathBuf>,
+
+        package_name: String,
+        package_version: String,
+        publisher: String,
 
         compression_level: i32,
 
@@ -180,6 +185,10 @@ mod desktop {
                 output: None,
                 extract_to: None,
 
+                package_name: "CWN Package".to_string(),
+                package_version: env!("CARGO_PKG_VERSION").to_string(),
+                publisher: "Community Watch Network".to_string(),
+
                 compression_level: 10,
 
                 status: "Ready.".to_string(),
@@ -265,6 +274,12 @@ mod desktop {
                     path.set_extension("CWN");
                 }
 
+                if self.package_name.trim().is_empty() || self.package_name == "CWN Package" {
+                    if let Some(name) = path.file_stem().and_then(|name| name.to_str()) {
+                        self.package_name = name.to_string();
+                    }
+                }
+
                 self.output = Some(path);
             }
         }
@@ -332,16 +347,34 @@ mod desktop {
 
             if self.inputs.is_empty() {
                 self.status = "Add at least one file or folder.".to_string();
+                self.status_kind = StatusKind::Warning;
                 return;
             }
 
             let Some(output) = self.output.clone() else {
                 self.status = "Choose an output .CWN file first.".to_string();
+                self.status_kind = StatusKind::Warning;
                 return;
             };
 
             let inputs = self.inputs.clone();
             let level = self.compression_level;
+
+            let metadata = match PackageMetadata::new(
+                self.package_name.clone(),
+                self.package_version.clone(),
+                self.publisher.clone(),
+            )
+            .validate()
+            {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    self.status = format!("Invalid package metadata: {error}");
+                    self.status_kind = StatusKind::Warning;
+                    return;
+                }
+            };
+
             let sender = self.task.sender.clone();
 
             self.busy = true;
@@ -356,10 +389,11 @@ mod desktop {
                     "Packing files into CWN container...".to_string(),
                 ));
 
-                match cwn_universal_packer::commands::pack::run_with_progress(
+                match cwn_universal_packer::commands::pack::run_with_metadata_and_progress(
                     inputs,
                     output.clone(),
                     level,
+                    metadata,
                     |event| {
                         let _ = sender.send(GuiMessage::Progress(event));
                     },
@@ -804,6 +838,60 @@ mod desktop {
                             }
                         }
                     });
+            });
+
+        ui.add_space(16.0);
+
+        ui.label(
+            egui::RichText::new("PACKAGE METADATA")
+                .small()
+                .strong()
+                .color(Self::accent()),
+        );
+
+        ui.add_space(6.0);
+
+        egui::Frame::group(ui.style())
+            .corner_radius(CornerRadius::same(8))
+            .show(ui, |ui| {
+                ui.add_enabled_ui(!self.busy, |ui| {
+                    egui::Grid::new("package_metadata")
+                        .num_columns(2)
+                        .spacing([18.0, 8.0])
+                        .show(ui, |ui| {
+                            ui.label("Package name");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.package_name)
+                                    .desired_width(320.0),
+                            );
+                            ui.end_row();
+
+                            ui.label("Package version");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.package_version)
+                                    .desired_width(320.0),
+                            );
+                            ui.end_row();
+
+                            ui.label("Publisher");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.publisher)
+                                    .desired_width(320.0),
+                            );
+                            ui.end_row();
+
+                            ui.label("Producer");
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "CWN Universal Packer {}",
+                                    env!("CARGO_PKG_VERSION")
+                                ))
+                                .monospace()
+                                .color(Self::muted()),
+                            );
+                            ui.end_row();
+                        });
+                });
             });
 
         ui.add_space(16.0);
