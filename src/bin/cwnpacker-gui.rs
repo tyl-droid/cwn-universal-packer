@@ -12,12 +12,21 @@ mod desktop {
     use cwn_universal_packer::filesystem::size::human_size;
     use cwn_universal_packer::gui_task::{GuiMessage, GuiTask};
     use eframe::egui;
+    use egui::{Color32, CornerRadius, Stroke, Vec2};
 
     use std::path::PathBuf;
     use std::thread;
     use std::time::Duration;
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Workspace {
+        Pack,
+        Archive,
+    }
+
     pub struct CwnPackerApp {
+        workspace: Workspace,
+
         inputs: Vec<PathBuf>,
 
         archive: Option<PathBuf>,
@@ -45,8 +54,65 @@ mod desktop {
     }
 
     impl CwnPackerApp {
+        fn apply_cwn_theme(ctx: &egui::Context) {
+            let mut visuals = egui::Visuals::dark();
+
+            visuals.panel_fill = Color32::from_rgb(10, 13, 18);
+            visuals.window_fill = Color32::from_rgb(15, 19, 26);
+            visuals.extreme_bg_color = Color32::from_rgb(7, 10, 14);
+
+            visuals.faint_bg_color = Color32::from_rgb(18, 24, 32);
+            visuals.code_bg_color = Color32::from_rgb(9, 13, 18);
+
+            visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(18, 23, 31);
+
+            visuals.widgets.noninteractive.bg_stroke =
+                Stroke::new(1.0, Color32::from_rgb(42, 53, 67));
+
+            visuals.widgets.inactive.bg_fill = Color32::from_rgb(21, 28, 37);
+
+            visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(48, 62, 78));
+
+            visuals.widgets.hovered.bg_fill = Color32::from_rgb(30, 40, 52);
+
+            visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(95, 190, 255));
+
+            visuals.widgets.active.bg_fill = Color32::from_rgb(34, 50, 65);
+
+            visuals.widgets.active.bg_stroke = Stroke::new(1.0, Color32::from_rgb(110, 205, 255));
+
+            visuals.selection.bg_fill = Color32::from_rgb(28, 104, 150);
+
+            visuals.selection.stroke = Stroke::new(1.0, Color32::from_rgb(160, 225, 255));
+
+            visuals.window_corner_radius = CornerRadius::same(10);
+
+            ctx.set_visuals(visuals);
+
+            let mut style = (*ctx.style()).clone();
+
+            style.spacing.item_spacing = Vec2::new(10.0, 8.0);
+            style.spacing.button_padding = Vec2::new(14.0, 8.0);
+
+            ctx.set_style(style);
+        }
+
+        fn accent() -> Color32 {
+            Color32::from_rgb(92, 196, 255)
+        }
+
+        fn success() -> Color32 {
+            Color32::from_rgb(95, 220, 150)
+        }
+
+        fn muted() -> Color32 {
+            Color32::from_rgb(145, 155, 170)
+        }
+
         pub fn new() -> Self {
             Self {
+                workspace: Workspace::Pack,
+
                 inputs: Vec::new(),
 
                 archive: None,
@@ -463,6 +529,8 @@ mod desktop {
 
     impl eframe::App for CwnPackerApp {
         fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+            Self::apply_cwn_theme(ctx);
+
             self.process_messages();
             self.handle_drag_and_drop(ctx);
 
@@ -470,15 +538,43 @@ mod desktop {
                 ctx.request_repaint_after(Duration::from_millis(100));
             }
 
-            egui::TopBottomPanel::top("header").show(ctx, |ui| {
-                ui.add_space(10.0);
+            egui::TopBottomPanel::top("header")
+                .exact_height(82.0)
+                .show(ctx, |ui| {
+                    ui.add_space(10.0);
 
-                ui.heading("CWN Universal Packer");
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.label(
+                                egui::RichText::new("CWN")
+                                    .size(14.0)
+                                    .strong()
+                                    .color(Self::accent()),
+                            );
 
-                ui.label("Community Watch Network • Universal .CWN Container");
+                            ui.label(egui::RichText::new("UNIVERSAL PACKER").size(24.0).strong());
 
-                ui.add_space(10.0);
-            });
+                            ui.label(
+                                egui::RichText::new("Secure universal .CWN container workspace")
+                                    .color(Self::muted()),
+                            );
+                        });
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                egui::RichText::new(env!("CARGO_PKG_VERSION"))
+                                    .monospace()
+                                    .color(Self::accent()),
+                            );
+
+                            ui.label(
+                                egui::RichText::new("COMMUNITY WATCH NETWORK")
+                                    .small()
+                                    .color(Self::muted()),
+                            );
+                        });
+                    });
+                });
 
             egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
                 ui.add_space(6.0);
@@ -492,7 +588,11 @@ mod desktop {
                             ui.strong(operation);
                         }
                     } else {
-                        ui.strong("Ready");
+                        ui.label(
+                            egui::RichText::new("● READY")
+                                .strong()
+                                .color(Self::success()),
+                        );
                     }
 
                     ui.separator();
@@ -520,6 +620,64 @@ mod desktop {
 
                 ui.add_space(6.0);
             });
+
+            egui::SidePanel::left("navigation")
+                .exact_width(190.0)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.add_space(14.0);
+
+                    ui.label(
+                        egui::RichText::new("WORKSPACE")
+                            .small()
+                            .strong()
+                            .color(Self::muted()),
+                    );
+
+                    ui.add_space(8.0);
+
+                    if ui
+                        .selectable_label(self.workspace == Workspace::Pack, "▣  Create Package")
+                        .clicked()
+                    {
+                        self.workspace = Workspace::Pack;
+                    }
+
+                    if ui
+                        .selectable_label(
+                            self.workspace == Workspace::Archive,
+                            "◫  Archive Browser",
+                        )
+                        .clicked()
+                    {
+                        self.workspace = Workspace::Archive;
+                    }
+
+                    ui.add_space(18.0);
+                    ui.separator();
+                    ui.add_space(12.0);
+
+                    ui.label(
+                        egui::RichText::new("ENGINE")
+                            .small()
+                            .strong()
+                            .color(Self::muted()),
+                    );
+
+                    ui.add_space(6.0);
+
+                    ui.label("CWN Container v1");
+                    ui.label("Zstandard");
+                    ui.label("SHA-256");
+
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                        ui.label(
+                            egui::RichText::new("CWN Universal Packer")
+                                .small()
+                                .color(Self::muted()),
+                        );
+                    });
+                });
 
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.heading("Create .CWN Package");
