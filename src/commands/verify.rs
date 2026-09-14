@@ -1,5 +1,6 @@
 use crate::container;
 use crate::container::manifest::EntryKind;
+use crate::engine::progress::ProgressEvent;
 use crate::security::hash::sha256_reader_counted;
 
 use anyhow::{Context, Result, bail};
@@ -8,12 +9,31 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 
 pub fn run(input: PathBuf) -> Result<()> {
+    run_with_progress(input, |_| {})
+}
+
+pub fn run_with_progress<F>(input: PathBuf, mut progress: F) -> Result<()>
+where
+    F: FnMut(ProgressEvent),
+{
     let (_, manifest) = container::read_manifest(&input)?;
+
+    let total = manifest
+        .entries
+        .iter()
+        .filter(|entry| entry.kind == EntryKind::File)
+        .count();
+
+    progress(ProgressEvent::Started {
+        operation: "Verification".to_string(),
+        total_items: Some(total),
+    });
 
     let mut archive = File::open(&input)?;
 
     let mut valid = 0usize;
     let mut failed = 0usize;
+    let mut current = 0usize;
 
     println!("CWN Integrity Verification");
     println!("────────────────────────────────────────");
@@ -22,6 +42,14 @@ pub fn run(input: PathBuf) -> Result<()> {
         if entry.kind != EntryKind::File {
             continue;
         }
+
+        current += 1;
+
+        progress(ProgressEvent::Item {
+            current,
+            total,
+            path: entry.path.clone(),
+        });
 
         archive.seek(SeekFrom::Start(entry.data_offset))?;
 
@@ -37,8 +65,6 @@ pub fn run(input: PathBuf) -> Result<()> {
                 let decoder = zstd::stream::read::Decoder::new(limited)
                     .with_context(|| format!("failed to decode {}", entry.path))?;
 
-                // Never permit decompression to exceed the declared size
-                // by more than one byte.
                 let mut bounded = decoder.take(entry.original_size.saturating_add(1));
 
                 sha256_reader_counted(&mut bounded)?
@@ -62,6 +88,7 @@ pub fn run(input: PathBuf) -> Result<()> {
                 "[FAIL] {} (size {} != {})",
                 entry.path, actual_size, entry.original_size
             );
+
             failed += 1;
             continue;
         }
@@ -85,6 +112,8 @@ pub fn run(input: PathBuf) -> Result<()> {
 
     println!();
     println!("Container integrity: VERIFIED");
+
+    progress(ProgressEvent::Finished);
 
     Ok(())
 }

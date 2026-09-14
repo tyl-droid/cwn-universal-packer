@@ -1,5 +1,6 @@
 use crate::container;
 use crate::container::manifest::EntryKind;
+use crate::engine::progress::ProgressEvent;
 use crate::filesystem::paths::safe_relative_path;
 
 use anyhow::{Context, Result, bail};
@@ -10,11 +11,31 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
 pub fn run(input: PathBuf, output: PathBuf) -> Result<()> {
+    run_with_progress(input, output, |_| {})
+}
+
+pub fn run_with_progress<F>(input: PathBuf, output: PathBuf, mut progress: F) -> Result<()>
+where
+    F: FnMut(ProgressEvent),
+{
     let (_, manifest) = container::read_manifest(&input)?;
+
+    let total = manifest
+        .entries
+        .iter()
+        .filter(|entry| entry.kind == EntryKind::File)
+        .count();
+
+    progress(ProgressEvent::Started {
+        operation: "Extraction".to_string(),
+        total_items: Some(total),
+    });
 
     fs::create_dir_all(&output)?;
 
     let mut archive = File::open(&input)?;
+
+    let mut current = 0usize;
 
     for entry in &manifest.entries {
         let relative = safe_relative_path(&entry.path)?;
@@ -27,11 +48,17 @@ pub fn run(input: PathBuf, output: PathBuf) -> Result<()> {
             }
 
             EntryKind::File => {
+                current += 1;
+
+                progress(ProgressEvent::Item {
+                    current,
+                    total,
+                    path: entry.path.clone(),
+                });
+
                 if let Some(parent) = destination.parent() {
                     fs::create_dir_all(parent)?;
                 }
-
-                archive.seek(SeekFrom::Start(entry.data_offset))?;
 
                 if destination.exists() {
                     bail!(
@@ -40,7 +67,10 @@ pub fn run(input: PathBuf, output: PathBuf) -> Result<()> {
                     );
                 }
 
+                archive.seek(SeekFrom::Start(entry.data_offset))?;
+
                 let mut output_file = File::create(&destination)?;
+
                 let mut hasher = Sha256::new();
                 let mut written = 0u64;
                 let mut buffer = [0u8; 64 * 1024];
@@ -66,7 +96,9 @@ pub fn run(input: PathBuf, output: PathBuf) -> Result<()> {
                             }
 
                             output_file.write_all(&buffer[..count])?;
+
                             hasher.update(&buffer[..count]);
+
                             written += count as u64;
                         }
                     }
@@ -88,7 +120,9 @@ pub fn run(input: PathBuf, output: PathBuf) -> Result<()> {
                             }
 
                             output_file.write_all(&buffer[..count])?;
+
                             hasher.update(&buffer[..count]);
+
                             written += count as u64;
                         }
                     }
@@ -132,6 +166,8 @@ pub fn run(input: PathBuf, output: PathBuf) -> Result<()> {
         manifest.entries.len(),
         output.display()
     );
+
+    progress(ProgressEvent::Finished);
 
     Ok(())
 }

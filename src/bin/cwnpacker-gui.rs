@@ -236,12 +236,18 @@ mod desktop {
             self.busy = true;
             self.current_operation = Some("Verification".to_string());
 
+            self.progress_current = 0;
+            self.progress_total = 0;
+            self.progress_path = None;
+
             thread::spawn(move || {
                 let _ = sender.send(GuiMessage::Started(
                     "Verifying SHA-256 integrity...".to_string(),
                 ));
 
-                match cwn_universal_packer::commands::verify::run(archive) {
+                match cwn_universal_packer::commands::verify::run_with_progress(archive, |event| {
+                    let _ = sender.send(GuiMessage::Progress(event));
+                }) {
                     Ok(()) => {
                         let _ = sender.send(GuiMessage::Success {
                             message: "Container integrity VERIFIED.".to_string(),
@@ -312,6 +318,10 @@ mod desktop {
 
             self.busy = true;
             self.current_operation = Some("Extraction".to_string());
+
+            self.progress_current = 0;
+            self.progress_total = 0;
+            self.progress_path = None;
 
             thread::spawn(move || {
                 let _ = sender.send(GuiMessage::Started(
