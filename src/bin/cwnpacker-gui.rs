@@ -32,6 +32,15 @@ mod desktop {
         Error,
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum ArchiveFilter {
+        All,
+        Files,
+        Directories,
+        Zstd,
+        Stored,
+    }
+
     pub struct CwnPackerApp {
         workspace: Workspace,
 
@@ -40,6 +49,7 @@ mod desktop {
         archive: Option<PathBuf>,
         archive_info: Option<ContainerInfo>,
         archive_search: String,
+        archive_filter: ArchiveFilter,
         selected_archive_entry: Option<usize>,
         output: Option<PathBuf>,
         extract_to: Option<PathBuf>,
@@ -146,6 +156,7 @@ mod desktop {
                 archive: None,
                 archive_info: None,
                 archive_search: String::new(),
+                archive_filter: ArchiveFilter::All,
                 selected_archive_entry: None,
                 output: None,
                 extract_to: None,
@@ -229,6 +240,7 @@ mod desktop {
             self.archive = Some(path.clone());
             self.archive_info = None;
             self.archive_search.clear();
+            self.archive_filter = ArchiveFilter::All;
             self.selected_archive_entry = None;
             self.busy = true;
             self.current_operation = Some("Inspecting".to_string());
@@ -908,6 +920,55 @@ mod desktop {
 
         ui.add_space(8.0);
 
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                egui::RichText::new("FILTER")
+                    .small()
+                    .strong()
+                    .color(Self::muted()),
+            );
+
+            if ui
+                .selectable_label(self.archive_filter == ArchiveFilter::All, "All")
+                .clicked()
+            {
+                self.archive_filter = ArchiveFilter::All;
+            }
+
+            if ui
+                .selectable_label(self.archive_filter == ArchiveFilter::Files, "Files")
+                .clicked()
+            {
+                self.archive_filter = ArchiveFilter::Files;
+            }
+
+            if ui
+                .selectable_label(
+                    self.archive_filter == ArchiveFilter::Directories,
+                    "Directories",
+                )
+                .clicked()
+            {
+                self.archive_filter = ArchiveFilter::Directories;
+            }
+
+            if ui
+                .selectable_label(self.archive_filter == ArchiveFilter::Zstd, "Zstd")
+                .clicked()
+            {
+                self.archive_filter = ArchiveFilter::Zstd;
+            }
+
+            if ui
+                .selectable_label(self.archive_filter == ArchiveFilter::Stored, "Stored")
+                .clicked()
+            {
+                self.archive_filter = ArchiveFilter::Stored;
+            }
+        });
+
+        ui.add_space(8.0);
+
         if let Some(index) = self.selected_archive_entry {
             if let Some(entry) = info.entries.get(index) {
                 egui::Frame::group(ui.style())
@@ -984,6 +1045,53 @@ mod desktop {
             }
         }
 
+        let query = self.archive_search.trim().to_ascii_lowercase();
+
+        let entry_matches = |entry: &cwn_universal_packer::engine::types::ContainerEntryInfo| {
+            let search_matches = query.is_empty()
+                || entry.path.to_ascii_lowercase().contains(&query)
+                || entry.file_type.to_ascii_lowercase().contains(&query)
+                || entry.compression.to_ascii_lowercase().contains(&query);
+
+            let filter_matches = match self.archive_filter {
+                ArchiveFilter::All => true,
+                ArchiveFilter::Files => !entry.is_directory,
+                ArchiveFilter::Directories => entry.is_directory,
+                ArchiveFilter::Zstd => !entry.is_directory && entry.compression == "zstd",
+                ArchiveFilter::Stored => !entry.is_directory && entry.compression == "none",
+            };
+
+            search_matches && filter_matches
+        };
+
+        let visible_entries = info
+            .entries
+            .iter()
+            .filter(|entry| entry_matches(entry))
+            .count();
+
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(format!(
+                    "Showing {} of {} entries",
+                    visible_entries,
+                    info.entries.len()
+                ))
+                .small()
+                .color(Self::muted()),
+            );
+
+            if visible_entries == 0 {
+                ui.label(
+                    egui::RichText::new("No matches")
+                        .small()
+                        .color(Self::warning()),
+                );
+            }
+        });
+
+        ui.add_space(6.0);
+
         egui::ScrollArea::both().max_height(360.0).show(ui, |ui| {
             egui::Grid::new("archive_entries")
                 .striped(true)
@@ -997,17 +1105,9 @@ mod desktop {
                     ui.strong("Path");
                     ui.end_row();
 
-                    let query = self.archive_search.trim().to_ascii_lowercase();
-
                     for (index, entry) in info.entries.iter().enumerate() {
-                        if !query.is_empty() {
-                            let matches = entry.path.to_ascii_lowercase().contains(&query)
-                                || entry.file_type.to_ascii_lowercase().contains(&query)
-                                || entry.compression.to_ascii_lowercase().contains(&query);
-
-                            if !matches {
-                                continue;
-                            }
+                        if !entry_matches(entry) {
+                            continue;
                         }
 
                         let selected = self.selected_archive_entry == Some(index);
