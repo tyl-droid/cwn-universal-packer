@@ -8,12 +8,16 @@ fn main() {
 
 #[cfg(not(target_os = "android"))]
 mod desktop {
+    use cwn_universal_packer::gui_task::{GuiMessage, GuiTask};
     use eframe::egui;
-    use std::path::PathBuf;
 
-    #[derive(Default)]
+    use std::path::PathBuf;
+    use std::thread;
+    use std::time::Duration;
+
     pub struct CwnPackerApp {
         inputs: Vec<PathBuf>,
+
         archive: Option<PathBuf>,
         output: Option<PathBuf>,
         extract_to: Option<PathBuf>,
@@ -21,23 +25,51 @@ mod desktop {
         compression_level: i32,
 
         status: String,
+        busy: bool,
+        current_operation: Option<String>,
+
+        task: GuiTask,
+    }
+
+    impl Default for CwnPackerApp {
+        fn default() -> Self {
+            Self::new()
+        }
     }
 
     impl CwnPackerApp {
         pub fn new() -> Self {
             Self {
+                inputs: Vec::new(),
+
+                archive: None,
+                output: None,
+                extract_to: None,
+
                 compression_level: 10,
+
                 status: "Ready.".to_string(),
-                ..Default::default()
+                busy: false,
+                current_operation: None,
+
+                task: GuiTask::new(),
+            }
+        }
+
+        fn add_input(&mut self, path: PathBuf) {
+            if !self.inputs.contains(&path) {
+                self.inputs.push(path);
             }
         }
 
         fn add_files(&mut self) {
+            if self.busy {
+                return;
+            }
+
             if let Some(files) = rfd::FileDialog::new().pick_files() {
                 for file in files {
-                    if !self.inputs.contains(&file) {
-                        self.inputs.push(file);
-                    }
+                    self.add_input(file);
                 }
 
                 self.status = format!("{} input item(s) selected.", self.inputs.len());
@@ -45,103 +77,178 @@ mod desktop {
         }
 
         fn add_folder(&mut self) {
+            if self.busy {
+                return;
+            }
+
             if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                if !self.inputs.contains(&folder) {
-                    self.inputs.push(folder);
-                }
+                self.add_input(folder);
 
                 self.status = format!("{} input item(s) selected.", self.inputs.len());
             }
         }
 
         fn choose_output(&mut self) {
-            if let Some(path) = rfd::FileDialog::new()
+            if self.busy {
+                return;
+            }
+
+            if let Some(mut path) = rfd::FileDialog::new()
                 .set_file_name("Package.CWN")
                 .save_file()
             {
+                if path.extension().is_none() {
+                    path.set_extension("CWN");
+                }
+
                 self.output = Some(path);
             }
         }
 
         fn open_archive(&mut self) {
+            if self.busy {
+                return;
+            }
+
             if let Some(path) = rfd::FileDialog::new()
                 .add_filter("CWN Container", &["CWN", "cwn"])
                 .pick_file()
             {
                 self.archive = Some(path);
+
                 self.status = "CWN container selected.".to_string();
             }
         }
 
         fn choose_extract_folder(&mut self) {
+            if self.busy {
+                return;
+            }
+
             if let Some(path) = rfd::FileDialog::new().pick_folder() {
                 self.extract_to = Some(path);
             }
         }
 
-        fn pack(&mut self) {
-            let Some(output) = self.output.clone() else {
-                self.status = "Choose an output .CWN file first.".to_string();
+        fn start_pack(&mut self) {
+            if self.busy {
                 return;
-            };
+            }
 
             if self.inputs.is_empty() {
                 self.status = "Add at least one file or folder.".to_string();
                 return;
             }
 
-            match cwn_universal_packer::commands::pack::run(
-                self.inputs.clone(),
-                output.clone(),
-                self.compression_level,
-            ) {
-                Ok(()) => {
-                    self.status = format!("Created {} successfully.", output.display());
+            let Some(output) = self.output.clone() else {
+                self.status = "Choose an output .CWN file first.".to_string();
+                return;
+            };
 
-                    self.archive = Some(output);
-                }
+            let inputs = self.inputs.clone();
+            let level = self.compression_level;
+            let sender = self.task.sender.clone();
 
-                Err(error) => {
-                    self.status = format!("Pack failed: {error}");
+            self.busy = true;
+            self.current_operation = Some("Packing".to_string());
+
+            thread::spawn(move || {
+                let _ = sender.send(GuiMessage::Started(
+                    "Packing files into CWN container...".to_string(),
+                ));
+
+                match cwn_universal_packer::commands::pack::run(inputs, output.clone(), level) {
+                    Ok(()) => {
+                        let _ = sender.send(GuiMessage::Success {
+                            message: format!("Created {} successfully.", output.display()),
+                            archive: Some(output),
+                        });
+                    }
+
+                    Err(error) => {
+                        let _ = sender.send(GuiMessage::Error(format!("Pack failed: {error}")));
+                    }
                 }
-            }
+            });
         }
 
-        fn verify(&mut self) {
+        fn start_verify(&mut self) {
+            if self.busy {
+                return;
+            }
+
             let Some(archive) = self.archive.clone() else {
                 self.status = "Open a .CWN container first.".to_string();
                 return;
             };
 
-            match cwn_universal_packer::commands::verify::run(archive) {
-                Ok(()) => {
-                    self.status = "Container integrity VERIFIED.".to_string();
-                }
+            let sender = self.task.sender.clone();
 
-                Err(error) => {
-                    self.status = format!("Verification failed: {error}");
+            self.busy = true;
+            self.current_operation = Some("Verification".to_string());
+
+            thread::spawn(move || {
+                let _ = sender.send(GuiMessage::Started(
+                    "Verifying SHA-256 integrity...".to_string(),
+                ));
+
+                match cwn_universal_packer::commands::verify::run(archive) {
+                    Ok(()) => {
+                        let _ = sender.send(GuiMessage::Success {
+                            message: "Container integrity VERIFIED.".to_string(),
+                            archive: None,
+                        });
+                    }
+
+                    Err(error) => {
+                        let _ =
+                            sender.send(GuiMessage::Error(format!("Verification failed: {error}")));
+                    }
                 }
-            }
+            });
         }
 
-        fn test_container(&mut self) {
+        fn start_test(&mut self) {
+            if self.busy {
+                return;
+            }
+
             let Some(archive) = self.archive.clone() else {
                 self.status = "Open a .CWN container first.".to_string();
                 return;
             };
 
-            match cwn_universal_packer::commands::test::run(archive) {
-                Ok(()) => {
-                    self.status = "Container structure VALID.".to_string();
-                }
+            let sender = self.task.sender.clone();
 
-                Err(error) => {
-                    self.status = format!("Container test failed: {error}");
+            self.busy = true;
+            self.current_operation = Some("Structure test".to_string());
+
+            thread::spawn(move || {
+                let _ = sender.send(GuiMessage::Started(
+                    "Testing CWN container structure...".to_string(),
+                ));
+
+                match cwn_universal_packer::commands::test::run(archive) {
+                    Ok(()) => {
+                        let _ = sender.send(GuiMessage::Success {
+                            message: "Container structure VALID.".to_string(),
+                            archive: None,
+                        });
+                    }
+
+                    Err(error) => {
+                        let _ = sender
+                            .send(GuiMessage::Error(format!("Container test failed: {error}")));
+                    }
                 }
-            }
+            });
         }
 
-        fn extract(&mut self) {
+        fn start_extract(&mut self) {
+            if self.busy {
+                return;
+            }
+
             let Some(archive) = self.archive.clone() else {
                 self.status = "Open a .CWN container first.".to_string();
                 return;
@@ -152,20 +259,90 @@ mod desktop {
                 return;
             };
 
-            match cwn_universal_packer::commands::unpack::run(archive, output.clone()) {
-                Ok(()) => {
-                    self.status = format!("Extracted to {}.", output.display());
-                }
+            let sender = self.task.sender.clone();
 
-                Err(error) => {
-                    self.status = format!("Extraction failed: {error}");
+            self.busy = true;
+            self.current_operation = Some("Extraction".to_string());
+
+            thread::spawn(move || {
+                let _ = sender.send(GuiMessage::Started(
+                    "Extracting CWN container...".to_string(),
+                ));
+
+                match cwn_universal_packer::commands::unpack::run(archive, output.clone()) {
+                    Ok(()) => {
+                        let _ = sender.send(GuiMessage::Success {
+                            message: format!("Extracted to {}.", output.display()),
+                            archive: None,
+                        });
+                    }
+
+                    Err(error) => {
+                        let _ =
+                            sender.send(GuiMessage::Error(format!("Extraction failed: {error}")));
+                    }
+                }
+            });
+        }
+
+        fn process_messages(&mut self) {
+            while let Ok(message) = self.task.receiver.try_recv() {
+                match message {
+                    GuiMessage::Started(message) => {
+                        self.status = message;
+                    }
+
+                    GuiMessage::Success { message, archive } => {
+                        self.status = message;
+
+                        if let Some(archive) = archive {
+                            self.archive = Some(archive);
+                        }
+
+                        self.busy = false;
+                        self.current_operation = None;
+                    }
+
+                    GuiMessage::Error(message) => {
+                        self.status = message;
+
+                        self.busy = false;
+                        self.current_operation = None;
+                    }
                 }
             }
+        }
+
+        fn handle_drag_and_drop(&mut self, ctx: &egui::Context) {
+            if self.busy {
+                return;
+            }
+
+            let dropped_files = ctx.input(|input| input.raw.dropped_files.clone());
+
+            if dropped_files.is_empty() {
+                return;
+            }
+
+            for dropped in dropped_files {
+                if let Some(path) = dropped.path {
+                    self.add_input(path);
+                }
+            }
+
+            self.status = format!("{} input item(s) selected.", self.inputs.len());
         }
     }
 
     impl eframe::App for CwnPackerApp {
         fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+            self.process_messages();
+            self.handle_drag_and_drop(ctx);
+
+            if self.busy {
+                ctx.request_repaint_after(Duration::from_millis(100));
+            }
+
             egui::TopBottomPanel::top("header").show(ctx, |ui| {
                 ui.add_space(10.0);
 
@@ -176,96 +353,164 @@ mod desktop {
                 ui.add_space(10.0);
             });
 
+            egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+                ui.add_space(6.0);
+                ui.separator();
+
+                ui.horizontal(|ui| {
+                    if self.busy {
+                        ui.spinner();
+
+                        if let Some(operation) = &self.current_operation {
+                            ui.strong(operation);
+                        }
+                    } else {
+                        ui.strong("Ready");
+                    }
+
+                    ui.separator();
+                    ui.label(&self.status);
+                });
+
+                ui.add_space(6.0);
+            });
+
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.heading("Create .CWN Package");
                 ui.separator();
 
                 ui.horizontal(|ui| {
-                    if ui.button("Add Files").clicked() {
-                        self.add_files();
-                    }
+                    ui.add_enabled_ui(!self.busy, |ui| {
+                        if ui.button("Add Files").clicked() {
+                            self.add_files();
+                        }
 
-                    if ui.button("Add Folder").clicked() {
-                        self.add_folder();
-                    }
+                        if ui.button("Add Folder").clicked() {
+                            self.add_folder();
+                        }
 
-                    if ui.button("Clear").clicked() {
-                        self.inputs.clear();
-                        self.status = "Input list cleared.".to_string();
-                    }
+                        if ui.button("Clear").clicked() {
+                            self.inputs.clear();
+
+                            self.status = "Input list cleared.".to_string();
+                        }
+                    });
                 });
 
                 ui.add_space(8.0);
 
-                egui::ScrollArea::vertical()
-                    .max_height(180.0)
-                    .show(ui, |ui| {
-                        if self.inputs.is_empty() {
-                            ui.label("No files or folders selected.");
-                        } else {
-                            for input in &self.inputs {
-                                ui.label(input.display().to_string());
+                ui.group(|ui| {
+                    ui.label("Drop files and folders here, or use the buttons above.");
+
+                    ui.add_space(5.0);
+
+                    egui::ScrollArea::vertical()
+                        .max_height(200.0)
+                        .show(ui, |ui| {
+                            if self.inputs.is_empty() {
+                                ui.weak("No files or folders selected.");
+                            } else {
+                                let mut remove = None;
+
+                                for (index, input) in self.inputs.iter().enumerate() {
+                                    ui.horizontal(|ui| {
+                                        ui.label(input.display().to_string());
+
+                                        if !self.busy && ui.small_button("Remove").clicked() {
+                                            remove = Some(index);
+                                        }
+                                    });
+                                }
+
+                                if let Some(index) = remove {
+                                    self.inputs.remove(index);
+                                }
                             }
-                        }
-                    });
+                        });
+                });
 
                 ui.add_space(10.0);
 
-                ui.horizontal(|ui| {
-                    ui.label("Compression level:");
+                ui.add_enabled_ui(!self.busy, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Compression:");
 
-                    ui.add(egui::Slider::new(&mut self.compression_level, 1..=22).text("Zstd"));
-                });
+                        ui.add(
+                            egui::Slider::new(&mut self.compression_level, 1..=22)
+                                .text("Zstd level"),
+                        );
+                    });
 
-                ui.horizontal(|ui| {
-                    if ui.button("Choose Output").clicked() {
-                        self.choose_output();
-                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("Choose Output").clicked() {
+                            self.choose_output();
+                        }
 
-                    if let Some(output) = &self.output {
-                        ui.label(output.display().to_string());
-                    }
+                        match &self.output {
+                            Some(output) => {
+                                ui.label(output.display().to_string());
+                            }
+
+                            None => {
+                                ui.weak("No output selected.");
+                            }
+                        }
+                    });
                 });
 
                 ui.add_space(8.0);
 
-                if ui.button("PACK TO .CWN").clicked() {
-                    self.pack();
+                if ui
+                    .add_enabled(
+                        !self.busy,
+                        egui::Button::new("PACK TO .CWN").min_size(egui::vec2(180.0, 36.0)),
+                    )
+                    .clicked()
+                {
+                    self.start_pack();
                 }
 
-                ui.add_space(20.0);
+                ui.add_space(24.0);
 
                 ui.heading("Open Existing .CWN");
                 ui.separator();
 
-                ui.horizontal(|ui| {
-                    if ui.button("Open CWN").clicked() {
-                        self.open_archive();
-                    }
+                ui.add_enabled_ui(!self.busy, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.button("Open CWN").clicked() {
+                            self.open_archive();
+                        }
 
-                    if let Some(archive) = &self.archive {
-                        ui.label(archive.display().to_string());
-                    }
-                });
+                        match &self.archive {
+                            Some(archive) => {
+                                ui.label(archive.display().to_string());
+                            }
 
-                ui.horizontal(|ui| {
-                    if ui.button("Test Structure").clicked() {
-                        self.test_container();
-                    }
+                            None => {
+                                ui.weak("No CWN container selected.");
+                            }
+                        }
+                    });
 
-                    if ui.button("Verify SHA-256").clicked() {
-                        self.verify();
-                    }
-                });
+                    ui.horizontal(|ui| {
+                        if ui.button("Test Structure").clicked() {
+                            self.start_test();
+                        }
 
-                ui.horizontal(|ui| {
-                    if ui.button("Choose Extract Folder").clicked() {
-                        self.choose_extract_folder();
-                    }
+                        if ui.button("Verify SHA-256").clicked() {
+                            self.start_verify();
+                        }
+                    });
 
-                    if ui.button("Extract").clicked() {
-                        self.extract();
-                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("Choose Extract Folder").clicked() {
+                            self.choose_extract_folder();
+                        }
+
+                        if ui.button("Extract").clicked() {
+                            self.start_extract();
+                        }
+                    });
                 });
 
                 if let Some(folder) = &self.extract_to {
@@ -275,8 +520,11 @@ mod desktop {
                 ui.add_space(20.0);
 
                 ui.separator();
-                ui.heading("Status");
-                ui.label(&self.status);
+
+                ui.label(format!(
+                    "CWN Universal Packer {}",
+                    env!("CARGO_PKG_VERSION")
+                ));
             });
         }
     }
@@ -285,7 +533,7 @@ mod desktop {
         let options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
                 .with_title("CWN Universal Packer")
-                .with_inner_size([900.0, 700.0])
+                .with_inner_size([920.0, 720.0])
                 .with_min_inner_size([720.0, 560.0]),
 
             ..Default::default()
