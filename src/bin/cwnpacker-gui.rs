@@ -527,6 +527,361 @@ mod desktop {
         }
     }
 
+    fn show_pack_workspace(&mut self, ui: &mut egui::Ui) {
+        ui.heading(egui::RichText::new("Create Package").size(22.0).strong());
+
+        ui.label(
+                egui::RichText::new(
+                    "Build a secure CWN container from files, folders, binaries, scripts and other content."
+                )
+                .color(Self::muted()),
+            );
+
+        ui.add_space(14.0);
+        ui.separator();
+        ui.add_space(10.0);
+
+        ui.horizontal(|ui| {
+            ui.add_enabled_ui(!self.busy, |ui| {
+                if ui.button("Add Files").clicked() {
+                    self.add_files();
+                }
+
+                if ui.button("Add Folder").clicked() {
+                    self.add_folder();
+                }
+
+                if ui.button("Clear").clicked() {
+                    self.inputs.clear();
+                    self.status = "Input list cleared.".to_string();
+                }
+            });
+        });
+
+        ui.add_space(10.0);
+
+        egui::Frame::group(ui.style())
+            .corner_radius(CornerRadius::same(8))
+            .show(ui, |ui| {
+                ui.set_min_height(190.0);
+
+                ui.label(
+                    egui::RichText::new("PACKAGE CONTENTS")
+                        .small()
+                        .strong()
+                        .color(Self::accent()),
+                );
+
+                ui.add_space(6.0);
+
+                ui.label(
+                    egui::RichText::new("Drop files and folders here, or use the buttons above.")
+                        .color(Self::muted()),
+                );
+
+                ui.add_space(8.0);
+
+                egui::ScrollArea::vertical()
+                    .max_height(170.0)
+                    .show(ui, |ui| {
+                        if self.inputs.is_empty() {
+                            ui.centered_and_justified(|ui| {
+                                ui.label(
+                                    egui::RichText::new("No files or folders selected.")
+                                        .color(Self::muted()),
+                                );
+                            });
+                        } else {
+                            let mut remove = None;
+
+                            for (index, input) in self.inputs.iter().enumerate() {
+                                ui.horizontal(|ui| {
+                                    ui.label("▣");
+
+                                    ui.label(
+                                        egui::RichText::new(input.display().to_string())
+                                            .monospace(),
+                                    );
+
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if !self.busy && ui.small_button("Remove").clicked() {
+                                                remove = Some(index);
+                                            }
+                                        },
+                                    );
+                                });
+
+                                ui.separator();
+                            }
+
+                            if let Some(index) = remove {
+                                self.inputs.remove(index);
+                            }
+                        }
+                    });
+            });
+
+        ui.add_space(16.0);
+
+        ui.label(
+            egui::RichText::new("COMPRESSION")
+                .small()
+                .strong()
+                .color(Self::accent()),
+        );
+
+        ui.add_space(6.0);
+
+        ui.add_enabled_ui(!self.busy, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Zstandard level");
+
+                ui.add(egui::Slider::new(&mut self.compression_level, 1..=22).show_value(true));
+            });
+        });
+
+        ui.add_space(14.0);
+
+        ui.label(
+            egui::RichText::new("OUTPUT")
+                .small()
+                .strong()
+                .color(Self::accent()),
+        );
+
+        ui.add_space(6.0);
+
+        ui.add_enabled_ui(!self.busy, |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("Choose Output").clicked() {
+                    self.choose_output();
+                }
+
+                match &self.output {
+                    Some(output) => {
+                        ui.label(egui::RichText::new(output.display().to_string()).monospace());
+                    }
+
+                    None => {
+                        ui.label(egui::RichText::new("No output selected.").color(Self::muted()));
+                    }
+                }
+            });
+        });
+
+        ui.add_space(18.0);
+
+        if ui
+            .add_enabled(
+                !self.busy,
+                egui::Button::new(egui::RichText::new("PACK TO .CWN").strong())
+                    .min_size(egui::vec2(210.0, 42.0)),
+            )
+            .clicked()
+        {
+            self.start_pack();
+        }
+    }
+
+    fn show_archive_workspace(&mut self, ui: &mut egui::Ui) {
+        ui.heading(egui::RichText::new("Archive Browser").size(22.0).strong());
+
+        ui.label(
+            egui::RichText::new("Inspect, validate, verify and extract CWN containers.")
+                .color(Self::muted()),
+        );
+
+        ui.add_space(14.0);
+        ui.separator();
+        ui.add_space(10.0);
+
+        ui.add_enabled_ui(!self.busy, |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("Open CWN").clicked() {
+                    self.open_archive();
+                }
+
+                match &self.archive {
+                    Some(archive) => {
+                        ui.label(egui::RichText::new(archive.display().to_string()).monospace());
+                    }
+
+                    None => {
+                        ui.label(
+                            egui::RichText::new("No CWN container selected.").color(Self::muted()),
+                        );
+                    }
+                }
+            });
+        });
+
+        ui.add_space(12.0);
+
+        ui.add_enabled_ui(!self.busy && self.archive.is_some(), |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("Test Structure").clicked() {
+                    self.start_test();
+                }
+
+                if ui.button("Verify SHA-256").clicked() {
+                    self.start_verify();
+                }
+
+                if ui.button("Choose Extract Folder").clicked() {
+                    self.choose_extract_folder();
+                }
+
+                if ui.button("Extract").clicked() {
+                    self.start_extract();
+                }
+            });
+        });
+
+        if let Some(folder) = &self.extract_to {
+            ui.add_space(6.0);
+
+            ui.label(
+                egui::RichText::new(format!("Extraction destination: {}", folder.display()))
+                    .small()
+                    .color(Self::muted()),
+            );
+        }
+
+        let Some(info) = &self.archive_info else {
+            ui.add_space(24.0);
+
+            egui::Frame::group(ui.style())
+                .corner_radius(CornerRadius::same(8))
+                .show(ui, |ui| {
+                    ui.set_min_height(150.0);
+
+                    ui.centered_and_justified(|ui| {
+                        ui.vertical_centered(|ui| {
+                            ui.label(egui::RichText::new("◫").size(30.0).color(Self::accent()));
+
+                            ui.label(
+                                egui::RichText::new("Open a .CWN container to inspect it.")
+                                    .color(Self::muted()),
+                            );
+                        });
+                    });
+                });
+
+            return;
+        };
+
+        ui.add_space(18.0);
+
+        ui.label(
+            egui::RichText::new("CONTAINER OVERVIEW")
+                .small()
+                .strong()
+                .color(Self::accent()),
+        );
+
+        ui.add_space(8.0);
+
+        egui::Grid::new("container_info")
+            .num_columns(2)
+            .striped(true)
+            .spacing([20.0, 8.0])
+            .show(ui, |ui| {
+                ui.label("Package");
+                ui.strong(&info.package_name);
+                ui.end_row();
+
+                ui.label("Package Version");
+                ui.label(&info.package_version);
+                ui.end_row();
+
+                ui.label("Publisher");
+                ui.label(&info.publisher);
+                ui.end_row();
+
+                ui.label("Producer");
+                ui.label(&info.producer);
+                ui.end_row();
+
+                ui.label("Format");
+                ui.label(format!("CWN v{}", info.format_version));
+                ui.end_row();
+
+                ui.label("Files");
+                ui.label(info.files.to_string());
+                ui.end_row();
+
+                ui.label("Directories");
+                ui.label(info.directories.to_string());
+                ui.end_row();
+
+                ui.label("Original Size");
+                ui.label(human_size(info.original_size));
+                ui.end_row();
+
+                ui.label("Payload Size");
+                ui.label(human_size(info.payload_size));
+                ui.end_row();
+
+                ui.label("Container Size");
+                ui.label(human_size(info.container_size));
+                ui.end_row();
+
+                ui.label("Zstandard Files");
+                ui.label(info.zstd_files.to_string());
+                ui.end_row();
+
+                ui.label("Stored Files");
+                ui.label(info.stored_files.to_string());
+                ui.end_row();
+            });
+
+        ui.add_space(18.0);
+
+        ui.label(
+            egui::RichText::new("ARCHIVE CONTENTS")
+                .small()
+                .strong()
+                .color(Self::accent()),
+        );
+
+        ui.add_space(8.0);
+
+        egui::ScrollArea::both().max_height(360.0).show(ui, |ui| {
+            egui::Grid::new("archive_entries")
+                .striped(true)
+                .min_col_width(90.0)
+                .spacing([16.0, 7.0])
+                .show(ui, |ui| {
+                    ui.strong("Type");
+                    ui.strong("Original");
+                    ui.strong("Stored");
+                    ui.strong("Method");
+                    ui.strong("Path");
+                    ui.end_row();
+
+                    for entry in &info.entries {
+                        if entry.is_directory {
+                            ui.label("Directory");
+                            ui.label("-");
+                            ui.label("-");
+                            ui.label("-");
+                        } else {
+                            ui.label(&entry.file_type);
+                            ui.label(human_size(entry.original_size));
+                            ui.label(human_size(entry.packed_size));
+                            ui.label(entry.compression.to_uppercase());
+                        }
+
+                        ui.label(egui::RichText::new(&entry.path).monospace());
+
+                        ui.end_row();
+                    }
+                });
+        });
+    }
+
     impl eframe::App for CwnPackerApp {
         fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
             Self::apply_cwn_theme(ctx);
@@ -680,254 +1035,39 @@ mod desktop {
                 });
 
             egui::CentralPanel::default().show(ctx, |ui| {
-                ui.heading("Create .CWN Package");
-                ui.separator();
+                ui.add_space(14.0);
 
-                ui.horizontal(|ui| {
-                    ui.add_enabled_ui(!self.busy, |ui| {
-                        if ui.button("Add Files").clicked() {
-                            self.add_files();
-                        }
+                match self.workspace {
+                    Workspace::Pack => {
+                        self.show_pack_workspace(ui);
+                    }
 
-                        if ui.button("Add Folder").clicked() {
-                            self.add_folder();
-                        }
-
-                        if ui.button("Clear").clicked() {
-                            self.inputs.clear();
-
-                            self.status = "Input list cleared.".to_string();
-                        }
-                    });
-                });
-
-                ui.add_space(8.0);
-
-                ui.group(|ui| {
-                    ui.label("Drop files and folders here, or use the buttons above.");
-
-                    ui.add_space(5.0);
-
-                    egui::ScrollArea::vertical()
-                        .max_height(200.0)
-                        .show(ui, |ui| {
-                            if self.inputs.is_empty() {
-                                ui.weak("No files or folders selected.");
-                            } else {
-                                let mut remove = None;
-
-                                for (index, input) in self.inputs.iter().enumerate() {
-                                    ui.horizontal(|ui| {
-                                        ui.label(input.display().to_string());
-
-                                        if !self.busy && ui.small_button("Remove").clicked() {
-                                            remove = Some(index);
-                                        }
-                                    });
-                                }
-
-                                if let Some(index) = remove {
-                                    self.inputs.remove(index);
-                                }
-                            }
-                        });
-                });
-
-                ui.add_space(10.0);
-
-                ui.add_enabled_ui(!self.busy, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label("Compression:");
-
-                        ui.add(
-                            egui::Slider::new(&mut self.compression_level, 1..=22)
-                                .text("Zstd level"),
-                        );
-                    });
-
-                    ui.horizontal(|ui| {
-                        if ui.button("Choose Output").clicked() {
-                            self.choose_output();
-                        }
-
-                        match &self.output {
-                            Some(output) => {
-                                ui.label(output.display().to_string());
-                            }
-
-                            None => {
-                                ui.weak("No output selected.");
-                            }
-                        }
-                    });
-                });
-
-                ui.add_space(8.0);
-
-                if ui
-                    .add_enabled(
-                        !self.busy,
-                        egui::Button::new("PACK TO .CWN").min_size(egui::vec2(180.0, 36.0)),
-                    )
-                    .clicked()
-                {
-                    self.start_pack();
+                    Workspace::Archive => {
+                        self.show_archive_workspace(ui);
+                    }
                 }
 
                 ui.add_space(24.0);
-
-                ui.heading("Open Existing .CWN");
                 ui.separator();
 
-                ui.add_enabled_ui(!self.busy, |ui| {
-                    ui.horizontal(|ui| {
-                        if ui.button("Open CWN").clicked() {
-                            self.open_archive();
-                        }
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "CWN Universal Packer {}",
+                            env!("CARGO_PKG_VERSION")
+                        ))
+                        .small()
+                        .color(Self::muted()),
+                    );
 
-                        match &self.archive {
-                            Some(archive) => {
-                                ui.label(archive.display().to_string());
-                            }
-
-                            None => {
-                                ui.weak("No CWN container selected.");
-                            }
-                        }
-                    });
-
-                    ui.horizontal(|ui| {
-                        if ui.button("Test Structure").clicked() {
-                            self.start_test();
-                        }
-
-                        if ui.button("Verify SHA-256").clicked() {
-                            self.start_verify();
-                        }
-                    });
-
-                    ui.horizontal(|ui| {
-                        if ui.button("Choose Extract Folder").clicked() {
-                            self.choose_extract_folder();
-                        }
-
-                        if ui.button("Extract").clicked() {
-                            self.start_extract();
-                        }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new("Community Watch Network")
+                                .small()
+                                .color(Self::muted()),
+                        );
                     });
                 });
-
-                if let Some(info) = &self.archive_info {
-                    ui.add_space(14.0);
-
-                    ui.heading("Container Details");
-                    ui.separator();
-
-                    egui::Grid::new("container_info")
-                        .num_columns(2)
-                        .striped(true)
-                        .show(ui, |ui| {
-                            ui.label("Package");
-                            ui.label(&info.package_name);
-                            ui.end_row();
-
-                            ui.label("Package Version");
-                            ui.label(&info.package_version);
-                            ui.end_row();
-
-                            ui.label("Publisher");
-                            ui.label(&info.publisher);
-                            ui.end_row();
-
-                            ui.label("Producer");
-                            ui.label(&info.producer);
-                            ui.end_row();
-
-                            ui.label("Format");
-                            ui.label(format!("CWN v{}", info.format_version));
-                            ui.end_row();
-
-                            ui.label("Files");
-                            ui.label(info.files.to_string());
-                            ui.end_row();
-
-                            ui.label("Directories");
-                            ui.label(info.directories.to_string());
-                            ui.end_row();
-
-                            ui.label("Original Size");
-                            ui.label(human_size(info.original_size));
-                            ui.end_row();
-
-                            ui.label("Payload Size");
-                            ui.label(human_size(info.payload_size));
-                            ui.end_row();
-
-                            ui.label("Container Size");
-                            ui.label(human_size(info.container_size));
-                            ui.end_row();
-
-                            ui.label("Zstandard Files");
-                            ui.label(info.zstd_files.to_string());
-                            ui.end_row();
-
-                            ui.label("Stored Files");
-                            ui.label(info.stored_files.to_string());
-                            ui.end_row();
-                        });
-
-                    ui.add_space(14.0);
-
-                    ui.heading("Archive Contents");
-                    ui.separator();
-
-                    egui::ScrollArea::both().max_height(260.0).show(ui, |ui| {
-                        egui::Grid::new("archive_entries")
-                            .striped(true)
-                            .min_col_width(90.0)
-                            .show(ui, |ui| {
-                                ui.strong("Type");
-                                ui.strong("Original");
-                                ui.strong("Stored");
-                                ui.strong("Method");
-                                ui.strong("Path");
-                                ui.end_row();
-
-                                for entry in &info.entries {
-                                    if entry.is_directory {
-                                        ui.label("Directory");
-                                        ui.label("-");
-                                        ui.label("-");
-                                        ui.label("-");
-                                    } else {
-                                        ui.label(&entry.file_type);
-
-                                        ui.label(human_size(entry.original_size));
-
-                                        ui.label(human_size(entry.packed_size));
-
-                                        ui.label(entry.compression.to_uppercase());
-                                    }
-
-                                    ui.label(&entry.path);
-                                    ui.end_row();
-                                }
-                            });
-                    });
-                }
-
-                if let Some(folder) = &self.extract_to {
-                    ui.label(format!("Extraction destination: {}", folder.display()));
-                }
-
-                ui.add_space(20.0);
-
-                ui.separator();
-
-                ui.label(format!(
-                    "CWN Universal Packer {}",
-                    env!("CARGO_PKG_VERSION")
-                ));
             });
         }
     }
