@@ -1,0 +1,42 @@
+name: Desktop GUI Check
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-desktop:
+    name: Linux Desktop GUI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libx11-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libgl1-mesa-dev \
+            libgtk-3-dev
+
+      - name: Check library and CLI
+        run: cargo check --all-targets
+
+      - name: Check desktop GUI
+        run: cargo check --bin cwnpacker-gui
+
+      - name: Run test suite
+        run: cargo test
