@@ -1,8 +1,3 @@
-mod commands;
-mod container;
-mod filesystem;
-mod security;
-
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -68,16 +63,18 @@ fn main() -> Result<()> {
             inputs,
             output,
             level,
-        } => commands::pack::run(inputs, output, level),
+        } => cwn_universal_packer::commands::pack::run(inputs, output, level),
 
-        Commands::Unpack { input, output } => commands::unpack::run(input, output),
+        Commands::Unpack { input, output } => {
+            cwn_universal_packer::commands::unpack::run(input, output)
+        }
 
-        Commands::List { input } => commands::list::run(input),
+        Commands::List { input } => cwn_universal_packer::commands::list::run(input),
 
-        Commands::Info { input } => commands::info::run(input),
+        Commands::Info { input } => cwn_universal_packer::commands::info::run(input),
 
-        Commands::Verify { input } => commands::verify::run(input),
+        Commands::Verify { input } => cwn_universal_packer::commands::verify::run(input),
 
-        Commands::Test { input } => commands::test::run(input),
+        Commands::Test { input } => cwn_universal_packer::commands::test::run(input),
     }
 }
